@@ -14,6 +14,11 @@ class AIState:
     base_url: str
     model: str
     enabled: bool
+    name: str = "Kage"
+    persona: str = (
+        "Autonomous Senior Systems Engineer and Anime Intelligence Operative for AnimeDekho. "
+        "Sharp, loyal, proactive, technically precise, and self-reliant."
+    )
 
 
 class AIConfigManager:
@@ -39,6 +44,8 @@ class AIConfigManager:
             saved_url = await db.get_config("ai_base_url")
             saved_model = await db.get_config("ai_model")
             saved_enabled = await db.get_config("ai_enabled")
+            saved_name = await db.get_config("ai_name")
+            saved_persona = await db.get_config("ai_persona")
 
             if saved_key is not None:
                 self._state.api_key = saved_key
@@ -48,12 +55,24 @@ class AIConfigManager:
                 self._state.model = saved_model
             if saved_enabled is not None:
                 self._state.enabled = bool(saved_enabled)
+            if saved_name is not None:
+                self._state.name = str(saved_name)
+            if saved_persona is not None:
+                self._state.persona = str(saved_persona)
 
             self._initialized = True
-            log.info("AI config loaded: model=%s base_url=%s enabled=%s",
-                     self._state.model, self._state.base_url, self._state.enabled)
+            log.info("AI config loaded: name=%s model=%s base_url=%s enabled=%s",
+                     self._state.name, self._state.model, self._state.base_url, self._state.enabled)
         except Exception as e:
             log.warning("Failed to load AI config from database: %s", e)
+
+    @property
+    def name(self) -> str:
+        return self._state.name
+
+    @property
+    def persona(self) -> str:
+        return self._state.persona
 
     @property
     def api_key(self) -> str:
@@ -70,6 +89,18 @@ class AIConfigManager:
     @property
     def enabled(self) -> bool:
         return self._state.enabled
+
+    async def set_name(self, name: str):
+        self._state.name = name.strip()
+        from bot.database import db
+        if db:
+            await db.set_config("ai_name", self._state.name)
+
+    async def set_persona(self, persona: str):
+        self._state.persona = persona.strip()
+        from bot.database import db
+        if db:
+            await db.set_config("ai_persona", self._state.persona)
 
     async def set_api_key(self, key: str):
         self._state.api_key = key.strip()
@@ -106,10 +137,11 @@ class AIConfigManager:
             if len(self._state.api_key) > 8
             else ("Set" if self._state.api_key else "❌ NOT SET")
         )
-        status_icon = "🟢 Enabled" if self._state.enabled else "🔴 Disabled"
+        status_icon = "🟢 Online" if self._state.enabled else "🔴 Offline"
         return (
-            f"🧠 <b>AI Agent Configuration</b>\n\n"
+            f"🤖 <b>Agent Profile: {self._state.name}</b>\n\n"
             f"• <b>Status:</b> {status_icon}\n"
+            f"• <b>Persona:</b> <i>{self._state.persona}</i>\n"
             f"• <b>Model:</b> <code>{self._state.model}</code>\n"
             f"• <b>Base URL:</b> <code>{self._state.base_url}</code>\n"
             f"• <b>API Key:</b> <code>{masked_key}</code>\n"

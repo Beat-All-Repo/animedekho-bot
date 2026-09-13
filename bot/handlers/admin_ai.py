@@ -23,16 +23,18 @@ async def cmd_setai(client: Client, message: Message):
         # Show status
         help_text = (
             f"{ai_config.get_status_summary()}\n"
-            f"<b>Commands:</b>\n"
+            f"<b>Agent Configuration Commands:</b>\n"
+            f"• <code>/setai name &lt;Name&gt;</code> — Set agent identity name\n"
+            f"• <code>/setai persona &lt;Description&gt;</code> — Set personality/vibe\n"
             f"• <code>/setai key &lt;API_KEY&gt;</code> — Set API key\n"
-            f"• <code>/setai url &lt;BASE_URL&gt;</code> — Set base URL\n"
+            f"• <code>/setai url &lt;BASE_URL&gt;</code> — Set base URL (OpenAI/Groq/OpenRouter/DeepSeek)\n"
             f"• <code>/setai model &lt;MODEL&gt;</code> — Set model name\n"
-            f"• <code>/setai on</code> | <code>/setai off</code> — Enable/disable AI\n"
-            f"• <code>/setai clear</code> — Clear chat history\n"
-            f"• <code>/setai test</code> — Test API connection\n\n"
-            f"<b>How to use AI:</b>\n"
+            f"• <code>/setai on</code> | <code>/setai off</code> — Bring agent online/offline\n"
+            f"• <code>/setai clear</code> — Clear memory\n"
+            f"• <code>/setai test</code> — Ping agent & verify tool readiness\n\n"
+            f"<b>Interact with your Agent:</b>\n"
             f"Send <code>/ai &lt;instruction or question&gt;</code>\n"
-            f"<i>e.g. /ai check the downloader logs and find out why Naruto episode 1 failed</i>"
+            f"<i>e.g. /ai check why a download failed and inspect bot/downloader.py</i>"
         )
         await message.reply_text(help_text, parse_mode=enums.ParseMode.HTML)
         return
@@ -41,22 +43,22 @@ async def cmd_setai(client: Client, message: Message):
 
     if subcmd in ("on", "enable"):
         await ai_config.set_enabled(True)
-        await message.reply_text("✅ AI Agent has been <b>enabled</b>.", parse_mode=enums.ParseMode.HTML)
+        await message.reply_text(f"✅ <b>{ai_config.name}</b> is now <b>Online</b>.", parse_mode=enums.ParseMode.HTML)
         return
 
     if subcmd in ("off", "disable"):
         await ai_config.set_enabled(False)
-        await message.reply_text("🔴 AI Agent has been <b>disabled</b>.", parse_mode=enums.ParseMode.HTML)
+        await message.reply_text(f"🔴 <b>{ai_config.name}</b> is now <b>Offline</b>.", parse_mode=enums.ParseMode.HTML)
         return
 
     if subcmd in ("clear", "reset"):
         ai_agent.clear_history()
-        await message.reply_text("🧹 AI conversation history cleared.")
+        await message.reply_text(f"🧹 <b>{ai_config.name}</b>'s conversation memory has been cleared.", parse_mode=enums.ParseMode.HTML)
         return
 
     if subcmd == "test":
-        status_msg = await message.reply_text("🧪 Testing AI connection...")
-        reply = await ai_agent.chat("Say 'AI Agent is connected and operational!' and list your active tools.")
+        status_msg = await message.reply_text(f"🧪 Testing <b>{ai_config.name}</b>'s cognitive connection...", parse_mode=enums.ParseMode.HTML)
+        reply = await ai_agent.chat("Introduce yourself briefly, state your role and your ready status.")
         await status_msg.edit_text(reply, parse_mode=enums.ParseMode.HTML)
         return
 
@@ -66,18 +68,26 @@ async def cmd_setai(client: Client, message: Message):
 
     val = parts[2].strip()
 
-    if subcmd in ("key", "api_key"):
+    if subcmd in ("name", "agent_name"):
+        await ai_config.set_name(val)
+        await message.reply_text(f"✅ Agent identity updated to <b>{ai_config.name}</b>", parse_mode=enums.ParseMode.HTML)
+
+    elif subcmd in ("persona", "personality"):
+        await ai_config.set_persona(val)
+        await message.reply_text(f"✅ Agent persona updated to:\n<i>{ai_config.persona}</i>", parse_mode=enums.ParseMode.HTML)
+
+    elif subcmd in ("key", "api_key"):
         await ai_config.set_api_key(val)
         masked = f"{val[:4]}...{val[-4:]}" if len(val) > 8 else "***"
-        await message.reply_text(f"✅ AI API key updated to <code>{masked}</code>", parse_mode=enums.ParseMode.HTML)
+        await message.reply_text(f"✅ API key updated to <code>{masked}</code>", parse_mode=enums.ParseMode.HTML)
 
     elif subcmd in ("url", "base_url"):
         await ai_config.set_base_url(val)
-        await message.reply_text(f"✅ AI Base URL updated to <code>{ai_config.base_url}</code>", parse_mode=enums.ParseMode.HTML)
+        await message.reply_text(f"✅ Base URL updated to <code>{ai_config.base_url}</code>", parse_mode=enums.ParseMode.HTML)
 
-    elif subcmd in ("model", "name"):
+    elif subcmd in ("model", "model_name"):
         await ai_config.set_model(val)
-        await message.reply_text(f"✅ AI Model updated to <code>{ai_config.model}</code>", parse_mode=enums.ParseMode.HTML)
+        await message.reply_text(f"✅ Model updated to <code>{ai_config.model}</code>", parse_mode=enums.ParseMode.HTML)
 
     else:
         await message.reply_text(f"⚠️ Unknown setting '<code>{esc(subcmd)}</code>'. Type <code>/setai</code> for help.", parse_mode=enums.ParseMode.HTML)
@@ -87,23 +97,38 @@ async def cmd_setai(client: Client, message: Message):
 async def cmd_ai(client: Client, message: Message):
     """Direct conversation with the autonomous AI Agent."""
     parts = message.text.split(maxsplit=1)
+    name = ai_config.name
     if len(parts) < 2 or not parts[1].strip():
         await message.reply_text(
-            "🤖 <b>AI Agent</b>\n\n"
-            "Usage: <code>/ai &lt;your request or question&gt;</code>\n\n"
-            "<i>Examples:</i>\n"
-            "• <code>/ai search Solo Leveling and inspect season 1 episodes</code>\n"
-            "• <code>/ai inspect bot/downloader.py and check if there are any bugs</code>\n"
-            "• <code>/ai run git status</code>",
+            f"🤖 <b>{name} — Autonomous Agent</b>\n\n"
+            f"Usage: <code>/ai &lt;your instruction or question&gt;</code>\n\n"
+            f"<i>Examples:</i>\n"
+            f"• <code>/ai search Solo Leveling and inspect season 1 episodes</code>\n"
+            f"• <code>/ai inspect bot/downloader.py and check if there are any bugs</code>\n"
+            f"• <code>/ai test video streams for yowayowa-sensei-1x1</code>\n"
+            f"• <code>/ai run git status</code>",
             parse_mode=enums.ParseMode.HTML,
         )
         return
 
     prompt = parts[1].strip()
-    status_msg = await message.reply_text("🤖 <i>Thinking & executing tools...</i>", parse_mode=enums.ParseMode.HTML)
+    status_msg = await message.reply_text(f"🤖 <i>{name} is thinking & analyzing...</i>", parse_mode=enums.ParseMode.HTML)
+
+    import time
+    last_edit = [0.0]
+
+    async def _on_status_update(status_text: str):
+        now = time.time()
+        # Throttle edits to at least 1.0 second apart to avoid Telegram 429 FloodWait
+        if now - last_edit[0] >= 1.0:
+            last_edit[0] = now
+            try:
+                await status_msg.edit_text(status_text, parse_mode=enums.ParseMode.HTML)
+            except Exception:
+                pass
 
     try:
-        reply = await ai_agent.chat(prompt)
+        reply = await ai_agent.chat(prompt, on_status_update=_on_status_update)
         # Split message if it exceeds Telegram 4096 character limit
         if len(reply) > 4000:
             chunks = [reply[i:i + 3900] for i in range(0, len(reply), 3900)]
@@ -114,4 +139,4 @@ async def cmd_ai(client: Client, message: Message):
             await status_msg.edit_text(reply, parse_mode=enums.ParseMode.HTML)
     except Exception as e:
         log.exception("Error in /ai handler")
-        await status_msg.edit_text(f"❌ <b>AI Error:</b> {esc(str(e))}", parse_mode=enums.ParseMode.HTML)
+        await status_msg.edit_text(f"❌ <b>{name} Error:</b> {esc(str(e))}", parse_mode=enums.ParseMode.HTML)
