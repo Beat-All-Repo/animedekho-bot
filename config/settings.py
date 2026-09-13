@@ -67,10 +67,19 @@ class BotConfig:
 
 
 @dataclass(frozen=True)
+class AIConfig:
+    api_key: str = field(default_factory=lambda: os.environ.get("AI_API_KEY", ""))
+    base_url: str = field(default_factory=lambda: os.environ.get("AI_BASE_URL", "https://api.openai.com/v1"))
+    model: str = field(default_factory=lambda: os.environ.get("AI_MODEL", "gpt-4o"))
+    enabled: bool = field(default_factory=lambda: os.environ.get("AI_ENABLED", "true").lower() in ("true", "1", "yes"))
+
+
+@dataclass(frozen=True)
 class Settings:
     site: SiteConfig = field(default_factory=SiteConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     bot: BotConfig = field(default_factory=BotConfig)
+    ai: AIConfig = field(default_factory=AIConfig)
 
 
 settings = Settings()

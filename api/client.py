@@ -31,10 +31,10 @@ class AnimeDekhoAPI:
 
     # ── Nonce management ──────────────────────────────────────────
 
-    async def _ensure_nonce(self) -> str:
-        if self._nonce:
+    async def _ensure_nonce(self, force_refresh: bool = False) -> str:
+        if self._nonce and not force_refresh:
             return self._nonce
-        # Try multiple URLs to get nonce — some may be blocked by CF
+        self._nonce = None
         urls_to_try = [
             f"{cfg.base_url}/home/",
             f"{cfg.base_url}/series-hindi/",
@@ -44,9 +44,13 @@ class AnimeDekhoAPI:
         last_error = None
         for url in urls_to_try:
             try:
-                html = await http_client.get(url, ttl=600)
-                self._nonce = parse_nonce(html)
-                if self._nonce:
+                if force_refresh:
+                    html = await http_client.get_no_cache(url)
+                else:
+                    html = await http_client.get(url, ttl=300)
+                nonce = parse_nonce(html)
+                if nonce:
+                    self._nonce = nonce
                     log.info("Nonce acquired from %s: %s...", url, self._nonce[:6])
                     return self._nonce
             except Exception as e:
@@ -61,41 +65,65 @@ class AnimeDekhoAPI:
     # ── Search ────────────────────────────────────────────────────
 
     async def search(self, query: str, page: int = 1) -> list[SearchResult]:
-        """Search anime/movies via admin-ajax action_search."""
-        nonce = await self._ensure_nonce()
-        vars_data = json.dumps({
-            "_wpsearch": nonce,
-            "search": query,
-            "page": page,
-        })
-        try:
-            resp = await http_client.post(
-                cfg.ajax_url,
-                data={"action": "action_search", "vars": vars_data},
-                ttl=settings.cache.search_ttl,
-            )
-        except Exception:
-            # Nonce might have expired
-            self._invalidate_nonce()
-            nonce = await self._ensure_nonce()
-            vars_data = json.dumps({
-                "_wpsearch": nonce,
-                "search": query,
-                "page": page,
-            })
-            resp = await http_client.post(
-                cfg.ajax_url,
-                data={"action": "action_search", "vars": vars_data},
-                ttl=settings.cache.search_ttl,
-            )
+        """Search anime/movies via admin-ajax action_search with auto-healing and GET ?s= fallback."""
+        query = query.strip()
+        if not query:
+            return []
 
-        try:
-            data = json.loads(resp)
-            html = data.get("html", resp)
-        except (json.JSONDecodeError, AttributeError):
-            html = resp
+        # Strategy 1: AJAX search with nonce
+        for attempt in range(2):
+            try:
+                nonce = await self._ensure_nonce(force_refresh=(attempt > 0))
+                vars_data = json.dumps({
+                    "_wpsearch": nonce,
+                    "search": query,
+                    "page": page,
+                })
+                resp = await http_client.post(
+                    cfg.ajax_url,
+                    data={"action": "action_search", "vars": vars_data},
+                    ttl=settings.cache.search_ttl if attempt == 0 else 0,
+                )
+                if resp:
+                    try:
+                        data = json.loads(resp)
+                    except (json.JSONDecodeError, AttributeError):
+                        data = None
 
-        return parse_search_html(html)
+                    if isinstance(data, dict):
+                        if data.get("status") == 400 or "error" in data:
+                            log.warning("AJAX search returned status 400 on attempt %d", attempt + 1)
+                            self._invalidate_nonce()
+                            continue
+                        html = data.get("html", "")
+                    else:
+                        html = resp
+
+                    if html:
+                        results = parse_search_html(html)
+                        if results:
+                            return results
+            except Exception as e:
+                log.warning("AJAX search failed on attempt %d: %s", attempt + 1, e)
+                self._invalidate_nonce()
+
+        # Strategy 2: Direct WordPress GET search fallback (no nonce required!)
+        log.info("Falling back to direct GET search for: %s", query)
+        try:
+            from urllib.parse import quote_plus
+            if page > 1:
+                fallback_url = f"{cfg.base_url}/page/{page}/?s={quote_plus(query)}"
+            else:
+                fallback_url = f"{cfg.base_url}/?s={quote_plus(query)}"
+            html = await http_client.get(fallback_url, ttl=settings.cache.search_ttl)
+            if html:
+                results = parse_search_html(html)
+                if results:
+                    return results
+        except Exception as e:
+            log.warning("Direct GET search fallback failed for '%s': %s", query, e)
+
+        return []
 
     # ── Listings ──────────────────────────────────────────────────
 

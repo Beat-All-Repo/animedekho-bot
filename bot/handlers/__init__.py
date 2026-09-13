@@ -1,7 +1,7 @@
 from pyrogram import Client, filters
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 
-from .commands import cmd_start, cmd_help
+from .commands import cmd_start, cmd_help, cmd_search
 from .callbacks import callback_router
 from .messages import handle_text
 from .admin import (
@@ -9,12 +9,14 @@ from .admin import (
     cmd_setchannellink,
     cmd_delete, delete_callback,
 )
+from .admin_ai import cmd_setai, cmd_ai
 
 __all__ = [
-    "cmd_start", "cmd_help", "callback_router", "handle_text",
+    "cmd_start", "cmd_help", "cmd_search", "callback_router", "handle_text",
     "cmd_adduser", "cmd_removeuser", "cmd_users",
     "cmd_setchannellink",
     "cmd_delete",
+    "cmd_setai", "cmd_ai",
     "register_handlers",
 ]
 
@@ -24,6 +26,11 @@ def register_handlers(app: Client):
     # Commands
     app.add_handler(MessageHandler(cmd_start, filters.command("start") & filters.private))
     app.add_handler(MessageHandler(cmd_help, filters.command("help") & filters.private))
+    app.add_handler(MessageHandler(cmd_search, filters.command("search") & filters.private))
+
+    # Owner AI commands
+    app.add_handler(MessageHandler(cmd_setai, filters.command("setai") & filters.private))
+    app.add_handler(MessageHandler(cmd_ai, filters.command("ai") & filters.private))
 
     # Admin commands (owner-only, checked inside each handler)
     app.add_handler(MessageHandler(cmd_adduser, filters.command("adduser") & filters.private))

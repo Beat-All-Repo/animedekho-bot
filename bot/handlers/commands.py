@@ -51,18 +51,43 @@ async def cmd_start(client: Client, message: Message):
 
 @require_approved
 async def cmd_help(client: Client, message: Message):
-    await message.reply_text(
-        "📖 <b>Commands</b>\n\n"
-        "/start — Main menu\n"
-        "/help — This message\n\n"
-        "Just type any anime name to search!\n\n"
-        "<b>Owner Commands:</b>\n"
+    is_owner_user = message.from_user and message.from_user.id == settings.bot.owner_id
+    owner_help = (
+        "\n\n<b>Owner Commands:</b>\n"
+        "/ai &lt;query&gt; — Chat with Autonomous AI Agent\n"
+        "/setai — View & change AI model/provider\n"
         "/adduser &lt;id&gt; — Approve a user\n"
         "/removeuser &lt;id&gt; — Remove a user\n"
         "/users — List approved users\n"
-        "/setchannellink &lt;url&gt; — Set channel invite link",
+        "/setchannellink &lt;url&gt; — Set channel invite link\n"
+        "/delete — Delete a series or file"
+    ) if is_owner_user else ""
+
+    await message.reply_text(
+        "📖 <b>Commands</b>\n\n"
+        "/start — Main menu\n"
+        "/search &lt;name&gt; — Search anime or movies\n"
+        "/help — This message\n\n"
+        "Just type any anime name in chat to search!"
+        f"{owner_help}",
         parse_mode=enums.ParseMode.HTML,
     )
+
+
+@require_approved
+async def cmd_search(client: Client, message: Message):
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.reply_text(
+            "🔍 Usage: <code>/search &lt;anime name&gt;</code>\n"
+            "Or simply type the anime name directly in chat!",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    from bot.handlers.messages import handle_text
+    message.text = parts[1].strip()
+    await handle_text(client, message)
 
 
 async def _handle_file_request(client: Client, message: Message, param: str):

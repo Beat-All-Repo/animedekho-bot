@@ -23,6 +23,11 @@ async def _on_start(client: Client):
     db_mod.db = db
     log.info("MongoDB connected")
 
+    # Init AI config
+    from bot.ai import ai_config
+    await ai_config.load()
+    log.info("AI Agent config loaded (model: %s)", ai_config.model)
+
     # Init bot logger
     from bot.logger import BotLogger
     import bot.logger as logger_mod
