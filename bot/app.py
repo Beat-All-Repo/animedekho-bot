@@ -86,24 +86,30 @@ async def _on_start(client: Client):
             log.warning("Could not auto-generate invite link: %s", e)
 
     # Set bot commands menu
-    from pyrogram.types import BotCommand, BotCommandScopeChat
+    from pyrogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
     try:
         # Default commands for everyone
         await client.set_bot_commands([
-            BotCommand("start", "Main menu & Search"),
+            BotCommand("start", "Main menu"),
+            BotCommand("search", "Search anime or movies"),
             BotCommand("help", "Show help message"),
-        ])
-        # Owner commands
-        await client.set_bot_commands([
-            BotCommand("start", "Main menu & Search"),
-            BotCommand("help", "Show help message"),
-            BotCommand("adduser", "Approve a user"),
-            BotCommand("removeuser", "Remove a user"),
-            BotCommand("users", "List approved users"),
-            BotCommand("setchannellink", "Set channel invite link"),
-            BotCommand("delete", "Delete a series or file"),
-        ], scope=BotCommandScopeChat(settings.bot.owner_id))
-        log.info("Bot commands set successfully")
+        ], scope=BotCommandScopeDefault())
+
+        # Owner commands (shown to the owner)
+        if settings.bot.owner_id:
+            await client.set_bot_commands([
+                BotCommand("start", "Main menu"),
+                BotCommand("search", "Search anime or movies"),
+                BotCommand("ai", "Autonomous AI Agent"),
+                BotCommand("setai", "Configure AI model, key & persona"),
+                BotCommand("help", "Show help message"),
+                BotCommand("adduser", "Approve a user"),
+                BotCommand("removeuser", "Remove a user"),
+                BotCommand("users", "List approved users"),
+                BotCommand("setchannellink", "Set channel invite link"),
+                BotCommand("delete", "Delete a series or file"),
+            ], scope=BotCommandScopeChat(settings.bot.owner_id))
+        log.info("Bot commands menu set successfully")
     except Exception as e:
         log.warning("Failed to set bot commands: %s", e)
 async def _on_stop(client: Client):
