@@ -201,6 +201,55 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_toonflix",
+            "description": "Search ToonFlix.in (fallback source with 4K / high quality anime).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Anime or movie title to search on ToonFlix.",
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "resolve_toonflix_stream",
+            "description": "Resolve episode or movie stream from ToonFlix.in, supporting 4K, 1080p, 720p.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "anime_title": {
+                        "type": "string",
+                        "description": "Anime title.",
+                    },
+                    "season": {
+                        "type": "integer",
+                        "description": "Season number (default 1).",
+                        "default": 1,
+                    },
+                    "episode": {
+                        "type": "integer",
+                        "description": "Episode number (default 1).",
+                        "default": 1,
+                    },
+                    "quality_pref": {
+                        "type": "string",
+                        "description": "Target resolution: '4K', '1080p', '720p', '480p'.",
+                        "default": "1080p",
+                    },
+                },
+                "required": ["anime_title"],
+            },
+        },
+    },
 ]
 
 
@@ -382,6 +431,24 @@ async def tool_run_shell_command(command: str) -> str:
         return f"Error executing shell command: {e}"
 
 
+async def tool_search_toonflix(query: str) -> str:
+    try:
+        from extractors.toonflix import toonflix
+        results = await toonflix.search(query)
+        return json.dumps(results[:10], indent=2) if results else f"No results on ToonFlix for '{query}'"
+    except Exception as e:
+        return f"ToonFlix search error: {e}"
+
+
+async def tool_resolve_toonflix_stream(anime_title: str, season: int = 1, episode: int = 1, quality_pref: str = "1080p") -> str:
+    try:
+        from extractors.toonflix import toonflix
+        res = await toonflix.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
+        return json.dumps(res, indent=2) if res else f"Could not resolve stream for '{anime_title}' S{season}E{episode} [{quality_pref}] on ToonFlix."
+    except Exception as e:
+        return f"ToonFlix resolution error: {e}"
+
+
 # ── Tool Dispatcher ───────────────────────────────────────────────────
 
 TOOL_MAP = {
@@ -394,6 +461,8 @@ TOOL_MAP = {
     "edit_project_file": tool_edit_project_file,
     "write_project_file": tool_write_project_file,
     "run_shell_command": tool_run_shell_command,
+    "search_toonflix": tool_search_toonflix,
+    "resolve_toonflix_stream": tool_resolve_toonflix_stream,
 }
 
 

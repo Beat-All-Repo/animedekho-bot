@@ -165,10 +165,12 @@ def quality_picker(
             label = f"{'📥' if available else '⚡'} 720p (HD)"
         elif q == "480p":
             label = f"{'📥' if available else '⚡'} 480p (SD)"
+        elif q.lower() in ("4k", "2160p"):
+            label = f"{'📥' if available else '✨'} 4K (UHD)"
         else:
             label = f"{'📥' if available else '⚡'} {q}"
         row.append(InlineKeyboardButton(label, callback_data=cb))
-        if len(row) >= 3:
+        if len(row) >= 2:
             buttons.append(row)
             row = []
     if row:

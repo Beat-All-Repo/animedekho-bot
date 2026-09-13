@@ -262,6 +262,36 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
 
     candidates = _find_quality_candidates(resolved or raw_servers, quality_pref)
 
+    # Extract season/episode info for filename and ToonFlix lookup
+    import re
+    m = re.match(r".*-(\d+)x(\d+)", ep_slug)
+    season = int(m.group(1)) if m else 1
+    ep_num = int(m.group(2)) if m else 1
+    series_slug = extract_series_slug(ep_slug)
+    series_title = slug_to_title(series_slug) if series_slug else title
+
+    # Fallback to ToonFlix if AnimeDekho lacks exact quality or if 4K was requested
+    has_exact = any(q.resolution.lower() == quality_pref.lower() for _, q in candidates)
+    if not has_exact or quality_pref.lower() in ("4k", "2160p"):
+        try:
+            from extractors.toonflix import toonflix
+            log.info("AnimeDekho lacks exact %s, checking ToonFlix fallback for '%s' S%dE%d", quality_pref, series_title, season, ep_num)
+            tf_res = await toonflix.resolve_episode(series_title, season=season, episode=ep_num, quality_pref=quality_pref)
+            if tf_res and tf_res.get("url"):
+                tf_srv = VideoServer(
+                    name="ToonFlix",
+                    player_url=tf_res["url"],
+                    is_resolved=True,
+                    qualities=[Quality(resolution=tf_res["quality"], url=tf_res["url"])],
+                )
+                if tf_res["quality"].lower() == quality_pref.lower() or quality_pref.lower() in ("4k", "2160p"):
+                    candidates.insert(0, (tf_srv, tf_srv.qualities[0]))
+                else:
+                    candidates.append((tf_srv, tf_srv.qualities[0]))
+                log.info("Added ToonFlix [%s] stream candidate", tf_res["quality"])
+        except Exception as e:
+            log.warning("ToonFlix resolution error: %s", e)
+
     if not candidates:
         await _safe_edit(q, "⚠️ No downloadable URL found on any server.")
         return
@@ -271,14 +301,6 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
     # Warn user if quality doesn't match what they requested
     if primary_quality.resolution != quality_pref and primary_quality.resolution != "auto":
         log.info("Quality fallback: requested %s, got %s", quality_pref, primary_quality.resolution)
-
-    # Extract season/episode info for filename
-    import re
-    m = re.match(r".*-(\d+)x(\d+)", ep_slug)
-    season = int(m.group(1)) if m else 0
-    ep_num = int(m.group(2)) if m else 0
-    series_slug = extract_series_slug(ep_slug)
-    series_title = slug_to_title(series_slug) if series_slug else title
 
     filename = make_episode_filename(series_title, season, ep_num, primary_quality.resolution)
     episode_key = f"S{season}E{ep_num:02d}" if season and ep_num else ""
@@ -364,6 +386,28 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
         _store_servers(chat_id, f"movie:{movie_slug}", resolved, title)
 
     candidates = _find_quality_candidates(resolved or raw_servers, quality_pref)
+
+    # Fallback to ToonFlix if AnimeDekho lacks exact quality or if 4K was requested
+    has_exact = any(q.resolution.lower() == quality_pref.lower() for _, q in candidates)
+    if not has_exact or quality_pref.lower() in ("4k", "2160p"):
+        try:
+            from extractors.toonflix import toonflix
+            log.info("AnimeDekho lacks exact %s, checking ToonFlix fallback for movie '%s'", quality_pref, title)
+            tf_res = await toonflix.resolve_episode(title, season=1, episode=1, quality_pref=quality_pref)
+            if tf_res and tf_res.get("url"):
+                tf_srv = VideoServer(
+                    name="ToonFlix",
+                    player_url=tf_res["url"],
+                    is_resolved=True,
+                    qualities=[Quality(resolution=tf_res["quality"], url=tf_res["url"])],
+                )
+                if tf_res["quality"].lower() == quality_pref.lower() or quality_pref.lower() in ("4k", "2160p"):
+                    candidates.insert(0, (tf_srv, tf_srv.qualities[0]))
+                else:
+                    candidates.append((tf_srv, tf_srv.qualities[0]))
+                log.info("Added ToonFlix movie candidate [%s]", tf_res["quality"])
+        except Exception as e:
+            log.warning("ToonFlix movie resolution error: %s", e)
 
     if not candidates:
         await _safe_edit(q, "⚠️ No downloadable URL found on any server.")
@@ -666,6 +710,34 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
             )
             if success:
                 break
+
+        if not success and not any(s.name == "ToonFlix" for s, _ in candidates):
+            # Ultimate safety net: try ToonFlix before failing
+            try:
+                from extractors.toonflix import toonflix
+                await progress_msg.edit_text(
+                    f"🔄 <b>AnimeDekho servers failed, trying ToonFlix fallback...</b>\n{esc(title)} [{chosen_quality.resolution}]",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+                import re
+                s_num, ep_num = 1, 1
+                if episode_key:
+                    ep_m = re.match(r"S(\d+)E(\d+)", episode_key, re.I)
+                    if ep_m:
+                        s_num = int(ep_m.group(1))
+                        ep_num = int(ep_m.group(2))
+
+                lookup_title = slug_to_title(series_slug) if series_slug else title
+                tf_res = await toonflix.resolve_episode(lookup_title, season=s_num, episode=ep_num, quality_pref=chosen_quality.resolution)
+                if tf_res and tf_res.get("url"):
+                    success, sent_msg = await download_and_upload(
+                        chat_id, tf_res["url"], tf_res["quality"], filename, title, progress_msg, client
+                    )
+                    if success:
+                        from api.models import Quality
+                        chosen_quality = Quality(resolution=tf_res["quality"], url=tf_res["url"])
+            except Exception as e:
+                log.warning("ToonFlix fallback in _do_download failed: %s", e)
 
         if success and bot.logger.bot_logger:
             await bot.logger.bot_logger.log_download_complete(title, chosen_quality.resolution, 0)

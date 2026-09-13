@@ -36,7 +36,7 @@ class SiteConfig:
         "VidStream", "Omega", "VidSrc", "Vidmoly", "StreamWish", "FileMoon", "VidCloud", "Strmup", "HydraX"
     ])
     # Default quality buttons always shown to user
-    default_qualities: list = field(default_factory=lambda: ["480p", "720p", "1080p"])
+    default_qualities: list = field(default_factory=lambda: ["480p", "720p", "1080p", "4K"])
 
 
 @dataclass(frozen=True)
