@@ -217,6 +217,11 @@ async def direct_http_download(
                     log.warning("Direct HTTP download failed with status %d", resp.status)
                     return False
 
+                ctype = resp.headers.get("Content-Type", "").lower()
+                if any(bad in ctype for bad in ("text/html", "text/plain", "application/json")):
+                    log.warning("Direct HTTP download rejected: URL returned non-media Content-Type '%s'", ctype)
+                    return False
+
                 total_bytes = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
                 last_bytes = 0
@@ -243,9 +248,13 @@ async def direct_http_download(
                                     interval=3.0,
                                 )
 
-        success = os.path.exists(output_path) and os.path.getsize(output_path) > 0
+        success = os.path.exists(output_path) and os.path.getsize(output_path) > 50_000
         if success:
             log.info("Direct HTTP download complete: %s (%s)", output_path, _format_size(os.path.getsize(output_path)))
+        else:
+            if os.path.exists(output_path):
+                try: os.remove(output_path)
+                except Exception: pass
         return success
 
     except Exception as e:
@@ -317,6 +326,7 @@ async def n_m3u8dl_re_download(
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,

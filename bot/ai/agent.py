@@ -34,7 +34,8 @@ Your Toolkit & Capabilities:
    - search_toonworld4all: Search ToonWorld4All (https://toonworld4all.me) catalog for 4K / high quality anime.
    - get_toonworld4all_episodes: Extract episode listings from a ToonWorld4All series page.
    - resolve_toonworld4all_stream: Resolve direct download/stream link from ToonWorld4All (supports 4K, 1080p, 720p, 480p).
-   - download_and_send_anime: Download any anime video and send it directly to the Commander's Telegram chat.
+   - download_anime_episode: Autonomous master tool to download any anime episode or movie and send it directly to the Commander's Telegram chat. Automatically attempts ToonWorld4All and AnimeDekho with smart fallback.
+   - download_and_send_anime: Download an anime video from a direct URL and send it directly to the Commander's Telegram chat.
 2. Codebase Self-Healing & Inspection:
    - list_project_files: Scan the repository tree.
    - read_project_file: Examine code, configurations, or logs.
@@ -44,7 +45,7 @@ Your Toolkit & Capabilities:
    - run_shell_command: Execute bash commands strictly inside the project root directory (e.g. syntax checks, git status/diff, running tests).
 
 Operational Rules:
-- When the owner asks you to download from ToonWorld4All or any source, resolve the link first, then execute download_and_send_anime.
+- When the Commander asks you to download any anime or episode (e.g. from ToonWorld4All, AnimeDekho, or generally), invoke `download_anime_episode` directly.
 - When the owner reports an issue or asks you to fix something, inspect the code or test the stream first using your tools before answering.
 - When you edit code, run `python3 -m py_compile <file>` via run_shell_command to verify syntax.
 - Always maintain your identity as {name}. Speak in your voice, explain your actions clearly, and confirm results.
@@ -78,6 +79,12 @@ def _format_tool_status(name: str, fn_name: str, args: dict[str, Any]) -> str:
         return f"📋 <b>{name}</b> is inspecting episodes on ToonWorld4All..."
     elif fn_name == "resolve_toonworld4all_stream":
         return f"🛰️ <b>{name}</b> is resolving stream on ToonWorld4All..."
+    elif fn_name == "download_anime_episode":
+        title = args.get("anime_title", "anime")
+        s = args.get("season", 1)
+        ep = args.get("episode", 1)
+        q = args.get("quality_pref", "1080p")
+        return f"📥 <b>{name}</b> is downloading <code>{title} S{s:02d}E{ep:02d}</code> [{q}] for you..."
     elif fn_name == "download_and_send_anime":
         return f"📥 <b>{name}</b> is downloading <code>{args.get('title', 'anime')}</code> [{args.get('quality', '1080p')}] to send to you..."
     elif fn_name == "search_toonflix":
@@ -101,8 +108,12 @@ class AIAgent:
         self,
         user_prompt: str,
         on_status_update=None,
+        client=None,
+        chat_id=None,
     ) -> str:
         """Run an autonomous agent turn with tool-calling loop and identity."""
+        from .tools import set_active_context
+        set_active_context(client=client, chat_id=chat_id)
         name = ai_config.name
 
         if not ai_config.enabled:

@@ -137,7 +137,7 @@ async def cmd_ai(client: Client, message: Message):
                 pass
 
     try:
-        reply = await ai_agent.chat(prompt, on_status_update=_on_status_update)
+        reply = await ai_agent.chat(prompt, on_status_update=_on_status_update, client=client, chat_id=message.chat.id)
         # Split message if it exceeds Telegram 4096 character limit
         if len(reply) > 4000:
             chunks = [reply[i:i + 3900] for i in range(0, len(reply), 3900)]

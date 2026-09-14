@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import shlex
 from pathlib import Path
@@ -17,6 +18,22 @@ from utils.helpers import esc, slug_to_title
 log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+_active_context: dict[str, Any] = {
+    "client": None,
+    "chat_id": None,
+}
+
+
+def set_active_context(client: Any = None, chat_id: int | None = None):
+    """Set the Pyrogram client and chat_id for autonomous download tools."""
+    _active_context["client"] = client
+    _active_context["chat_id"] = chat_id
+
+
+def get_active_context() -> tuple[Any, int | None]:
+    """Retrieve the currently active Pyrogram client and chat_id."""
+    return _active_context.get("client"), _active_context.get("chat_id")
 
 
 def _validate_path(path_str: str) -> Path:
@@ -296,6 +313,43 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "download_anime_episode",
+            "description": "Autonomous master tool to download any anime episode or movie and send it directly to the Commander's Telegram chat. Automatically handles ToonWorld4All and AnimeDekho resolution with smart fallback.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "anime_title": {
+                        "type": "string",
+                        "description": "Title of the anime series or movie (e.g. 'Solo Leveling', 'Naruto Shippuden', 'Demon Slayer').",
+                    },
+                    "season": {
+                        "type": "integer",
+                        "description": "Season number (default: 1).",
+                        "default": 1,
+                    },
+                    "episode": {
+                        "type": "integer",
+                        "description": "Episode number (default: 1).",
+                        "default": 1,
+                    },
+                    "quality_pref": {
+                        "type": "string",
+                        "description": "Desired resolution: '1080p', '720p', '480p', or '4K' (default: '1080p').",
+                        "default": "1080p",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Preferred source: 'auto', 'toonworld4all', or 'animedekho' (default: 'auto').",
+                        "default": "auto",
+                    },
+                },
+                "required": ["anime_title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_toonflix",
             "description": "Search ToonFlix.in (legacy fallback).",
             "parameters": {
@@ -550,36 +604,230 @@ async def tool_resolve_toonworld4all_stream(anime_title: str, season: int = 1, e
         return f"ToonWorld4All resolution error: {e}"
 
 
+async def _resolve_animedekho_stream(anime_title: str, season: int, episode: int, quality_pref: str) -> tuple[dict | None, str | None]:
+    """Internal helper to locate and resolve direct streams from AnimeDekho."""
+    try:
+        results = await api.search(anime_title)
+        if not results:
+            return None, None
+        best = None
+        for r in results:
+            if anime_title.lower() in r.title.lower():
+                best = r
+                break
+        if not best:
+            best = results[0]
+
+        srv_priority = ['VidStream', 'Vidmoly', 'NeoCDN', 'MyCloud', 'HydraX', 'VidSrc', 'VidCloud']
+
+        if best.is_series:
+            series = await api.get_series(best.slug)
+            s_obj = series.seasons.get(season)
+            if not s_obj and season == 1 and len(series.seasons) == 1:
+                s_obj = list(series.seasons.values())[0]
+            if not s_obj:
+                return None, None
+            ep_obj = None
+            for ep in s_obj.episodes:
+                if ep.number == episode:
+                    ep_obj = ep
+                    break
+            if not ep_obj and len(s_obj.episodes) >= episode:
+                ep_obj = s_obj.episodes[episode - 1]
+            if not ep_obj:
+                return None, None
+
+            ep_detail = await api.get_episode(ep_obj.slug)
+            sorted_servers = sorted(ep_detail.servers, key=lambda s: srv_priority.index(s.name) if s.name in srv_priority else 99)
+            for srv in sorted_servers:
+                try:
+                    resolved_srv = await api.resolve_server(srv)
+                    if resolved_srv.player_url:
+                        stream = await resolve_player_url(resolved_srv.player_url)
+                        if stream and stream.get("url"):
+                            return stream, f"AnimeDekho ({srv.name})"
+                except Exception:
+                    pass
+        else:
+            movie = await api.get_movie(best.slug)
+            sorted_servers = sorted(movie.servers, key=lambda s: srv_priority.index(s.name) if s.name in srv_priority else 99)
+            for srv in sorted_servers:
+                try:
+                    resolved_srv = await api.resolve_server(srv)
+                    if resolved_srv.player_url:
+                        stream = await resolve_player_url(resolved_srv.player_url)
+                        if stream and stream.get("url"):
+                            return stream, f"AnimeDekho ({srv.name})"
+                except Exception:
+                    pass
+    except Exception as e:
+        log.warning("_resolve_animedekho_stream failed for %s: %s", anime_title, e)
+    return None, None
+
+
+async def tool_download_anime_episode(
+    anime_title: str,
+    season: int = 1,
+    episode: int = 1,
+    quality_pref: str = "1080p",
+    source: str = "auto",
+) -> str:
+    try:
+        from pyrogram import enums
+        from bot.downloader import download_and_upload
+        from bot.ai.config import ai_config
+
+        client, chat_id = get_active_context()
+        if not client:
+            from bot.app import active_bot_client
+            client = active_bot_client
+        if not chat_id:
+            from config.settings import settings
+            chat_id = int(settings.bot.owner_id) if settings.bot.owner_id else None
+
+        if not client or not chat_id:
+            return "Error: Telegram bot client or destination chat is not initialized."
+
+        name = ai_config.name
+        display_title = f"{anime_title} S{season:02d}E{episode:02d}"
+        status_msg = await client.send_message(
+            chat_id=chat_id,
+            text=f"🤖 <b>{name}</b>: Locating episode <b>{display_title}</b> [{quality_pref}]...",
+            parse_mode=enums.ParseMode.HTML,
+        )
+
+        stream_url = None
+        variant_url = ""
+        source_used = None
+        notes = []
+
+        # Step 1: Try ToonWorld4All if requested or in auto mode
+        if source.lower() in ("toonworld4all", "auto"):
+            try:
+                from extractors.toonworld4all import toonworld4all, is_playable_media_url
+                tw_res = await toonworld4all.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
+                if tw_res and tw_res.get("url") and is_playable_media_url(tw_res["url"]):
+                    stream_url = tw_res["url"]
+                    source_used = f"ToonWorld4All ({tw_res.get('server', 'Direct')})"
+                else:
+                    notes.append("ToonWorld4All link is protected by shortener/Cloudflare captcha or unavailable")
+            except Exception as e:
+                notes.append(f"ToonWorld4All error: {e}")
+
+        # Step 2: Fallback to AnimeDekho (ultra-fast direct HLS)
+        if not stream_url:
+            try:
+                await status_msg.edit_text(
+                    f"🤖 <b>{name}</b>: ToonWorld4All is locked/unavailable. Switching to AnimeDekho direct stream for <b>{display_title}</b> [{quality_pref}]...",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+            except Exception:
+                pass
+
+            stream_obj, srv_name = await _resolve_animedekho_stream(anime_title, season, episode, quality_pref)
+            if stream_obj and stream_obj.get("url"):
+                stream_url = stream_obj["url"]
+                source_used = srv_name
+                for q in stream_obj.get("qualities", []):
+                    if hasattr(q, "resolution") and q.resolution.lower() == quality_pref.lower() and q.url:
+                        variant_url = q.url
+                        break
+            else:
+                notes.append("AnimeDekho episode servers not available")
+
+        # Step 3: If still not resolved, try ToonFlix
+        if not stream_url:
+            try:
+                from extractors.toonflix import toonflix
+                tf_res = await toonflix.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
+                if tf_res and tf_res.get("url"):
+                    stream_url = tf_res["url"]
+                    source_used = f"ToonFlix ({tf_res.get('server', 'Direct')})"
+            except Exception as e:
+                notes.append(f"ToonFlix error: {e}")
+
+        if not stream_url:
+            err_details = "; ".join(notes) if notes else "No playable stream found"
+            try:
+                await status_msg.edit_text(
+                    f"❌ <b>{name}</b>: Failed to resolve stream for <b>{display_title}</b> [{quality_pref}].\nDetails: {err_details}",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+            except Exception:
+                pass
+            return f"Failed to locate playable stream for '{display_title}'. Details: {err_details}"
+
+        # Step 4: Download and send to chat
+        try:
+            await status_msg.edit_text(
+                f"🤖 <b>{name}</b>: Downloading <b>{display_title}</b> [{quality_pref}] via {source_used}...",
+                parse_mode=enums.ParseMode.HTML,
+            )
+        except Exception:
+            pass
+
+        clean_slug = re.sub(r'[^a-zA-Z0-9_-]', '_', anime_title)
+        filename = f"{clean_slug}_S{season:02d}E{episode:02d}_{quality_pref}.mp4"
+
+        success, sent_msg = await download_and_upload(
+            chat_id=chat_id,
+            stream_url=stream_url,
+            quality=quality_pref,
+            filename=filename,
+            title=display_title,
+            progress_msg=status_msg,
+            client=client,
+            variant_url=variant_url,
+        )
+
+        if success and sent_msg:
+            return (
+                f"Success: Successfully downloaded and delivered '{display_title}' [{quality_pref}] "
+                f"to Telegram chat {chat_id} via {source_used}."
+            )
+        return f"Download or upload failed for '{display_title}' via {source_used}."
+    except Exception as e:
+        log.exception("tool_download_anime_episode failed")
+        return f"Error executing download: {e}"
+
+
 async def tool_download_and_send_anime(stream_url: str, title: str, quality: str = "1080p") -> str:
     try:
         from pyrogram import enums
-        from bot.app import active_bot_client
         from config.settings import settings
         from bot.downloader import download_and_upload
+        from bot.ai.config import ai_config
 
-        if not active_bot_client:
-            return "Error: Telegram bot client is not running or initialized."
+        client, chat_id = get_active_context()
+        if not client:
+            from bot.app import active_bot_client
+            client = active_bot_client
+        if not chat_id:
+            chat_id = int(settings.bot.owner_id) if settings.bot.owner_id else None
 
-        owner_id = int(settings.bot.owner_id)
-        status_msg = await active_bot_client.send_message(
-            chat_id=owner_id,
-            text=f"🤖 <b>Kage</b>: Initiating autonomous download for <b>{title}</b> [{quality}]...",
+        if not client or not chat_id:
+            return "Error: Telegram bot client or destination chat is not initialized."
+
+        name = ai_config.name
+        status_msg = await client.send_message(
+            chat_id=chat_id,
+            text=f"🤖 <b>{name}</b>: Initiating download for <b>{title}</b> [{quality}]...",
             parse_mode=enums.ParseMode.HTML,
         )
 
         clean_filename = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', title)}_{quality}.mp4"
         success, sent_msg = await download_and_upload(
-            chat_id=owner_id,
+            chat_id=chat_id,
             stream_url=stream_url,
             quality=quality,
             filename=clean_filename,
             title=title,
             progress_msg=status_msg,
-            client=active_bot_client,
+            client=client,
         )
 
         if success and sent_msg:
-            return f"Success: Downloaded and uploaded '{title}' [{quality}] directly to Telegram chat {owner_id}."
+            return f"Success: Downloaded and uploaded '{title}' [{quality}] directly to Telegram chat {chat_id}."
         return f"Download or upload failed for '{title}'. Check server logs for details."
     except Exception as e:
         log.exception("tool_download_and_send_anime failed")
@@ -619,6 +867,7 @@ TOOL_MAP = {
     "search_toonworld4all": tool_search_toonworld4all,
     "get_toonworld4all_episodes": tool_get_toonworld4all_episodes,
     "resolve_toonworld4all_stream": tool_resolve_toonworld4all_stream,
+    "download_anime_episode": tool_download_anime_episode,
     "download_and_send_anime": tool_download_and_send_anime,
     "search_toonflix": tool_search_toonflix,
     "resolve_toonflix_stream": tool_resolve_toonflix_stream,
@@ -637,3 +886,4 @@ async def execute_tool_call(name: str, arguments: dict[str, Any]) -> str:
     except Exception as e:
         log.exception("Tool execution failed for %s", name)
         return f"Error executing {name}: {e}"
+

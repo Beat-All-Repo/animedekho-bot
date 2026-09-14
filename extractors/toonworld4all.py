@@ -23,6 +23,28 @@ def _get_scraper() -> cloudscraper.CloudScraper:
     )
 
 
+def is_playable_media_url(url: str) -> bool:
+    """Return True if URL is likely a playable direct video stream or file, not an ad shortener or landing page."""
+    if not url or not url.startswith("http"):
+        return False
+    u = url.lower()
+    # Ad shorteners or file lockers with interactive captchas/landing pages
+    unplayable_domains = [
+        "exe.io", "cuty.io", "cutt.ly", "gplinks", "vshort", "droplink",
+        "filepress", "hubcloud.ist/video", "hubcloud.club", "hubcloud.org",
+        "ouo.io", "linkvertise", "shrinkme", "shareus", "gofile.io"
+    ]
+    if any(bad in u for bad in unplayable_domains):
+        return False
+    # Known video stream / direct file patterns
+    if any(ext in u for ext in (".m3u8", ".mpd", ".mp4", ".mkv", ".webm", ".ts")):
+        return True
+    if any(dom in u for dom in ("googleusercontent.com", "drive.google.com", "mega.nz", "workers.dev")):
+        return True
+    return False
+
+
+
 class Toonworld4allExtractor:
     """Extracts 4K, 1080p, 720p, 480p anime episodes & movies from ToonWorld4All with AI fallback."""
 
@@ -221,7 +243,7 @@ class Toonworld4allExtractor:
             if "url=" in loc:
                 raw = loc.split("url=")[1].split("&")[0]
                 dec = urllib.parse.unquote(base64.b64decode(urllib.parse.unquote(raw)).decode("utf-8", errors="ignore"))
-                if dec.startswith("http"):
+                if dec.startswith("http") and is_playable_media_url(dec):
                     return {
                         "url": dec,
                         "quality": quality_pref,
@@ -292,25 +314,28 @@ class Toonworld4allExtractor:
                 domain = link_data.get("domain", "")
                 hidden = link_data.get("hidden", "")
 
-                # If domain and hidden are present, construct direct URL
+                # If domain and hidden are present, construct direct URL and verify it's playable
                 if domain and hidden:
                     direct_url = f"{domain.rstrip('/')}/{hidden.lstrip('/')}"
-                    return {
-                        "url": direct_url,
-                        "quality": matched_quality,
-                        "server": "ToonWorld4All",
-                        "referer": "https://archive.toonworld4all.me/",
-                    }
+                    if is_playable_media_url(direct_url):
+                        return {
+                            "url": direct_url,
+                            "quality": matched_quality,
+                            "server": "ToonWorld4All",
+                            "referer": "https://archive.toonworld4all.me/",
+                        }
 
-                # Otherwise check destination shortener
+                # Otherwise check destination shortener and verify if playable
                 dest = props.get("destination")
-                if dest:
+                if dest and is_playable_media_url(dest):
                     return {
                         "url": dest,
                         "quality": matched_quality,
                         "server": "ToonWorld4All",
                         "referer": "https://archive.toonworld4all.me/",
                     }
+
+                log.info("ToonWorld4All link is behind protected ad-shortener/filepress: %s", dest or domain)
         except Exception as e:
             log.warning("ToonWorld4All redirect parse error: %s", e)
 
@@ -371,13 +396,16 @@ class Toonworld4allExtractor:
                             # Clean code fence
                             raw_text = re.sub(r"^```(json)?", "", raw_text).strip("` \n")
                             j = json.loads(raw_text)
-                            if j.get("url"):
+                            u = j.get("url")
+                            if u and is_playable_media_url(u):
                                 return {
-                                    "url": j["url"],
+                                    "url": u,
                                     "quality": j.get("quality", quality_pref),
                                     "server": "ToonWorld4All (AI Resolved)",
                                     "referer": "https://toonworld4all.me/",
                                 }
+                            else:
+                                log.info("AI fallback returned non-playable or locker link: %s", u)
         except Exception as e:
             log.warning("AI fallback resolution failed: %s", e)
 
