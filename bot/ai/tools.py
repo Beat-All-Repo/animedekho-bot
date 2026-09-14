@@ -331,7 +331,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "download_anime_episode",
-            "description": "Autonomous master tool to download any anime episode or movie and send it directly to the Commander's Telegram chat. Automatically handles AnimeDekho (Primary), AnimeDrive (Secondary), and ToonFlix (Tertiary) with smart fallback.",
+            "description": "Autonomous master tool to download any anime episode or movie and send it directly to the Telegram chat. Checks library cache first to deliver existing files instantly without re-downloading, saves new files to the Main Channel Library, and cascades across AnimeDekho, AnimeDrive (4K default), and ToonFlix.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -815,9 +815,41 @@ async def tool_download_anime_episode(
 
         name = ai_config.name
         display_title = f"{anime_title} S{season:02d}E{episode:02d}"
+        episode_key = f"S{season:02d}E{episode:02d}"
+
         status_msg = await client.send_message(
             chat_id=chat_id,
-            text=f"🤖 <b>{name}</b>: Locating episode <b>{display_title}</b> [{quality_pref}]...",
+            text=f"🤖 <b>{name}</b>: Checking library for <b>{display_title}</b> [{quality_pref}]...",
+            parse_mode=enums.ParseMode.HTML,
+        )
+
+        # ── Step 0: Check library cache (no re-downloading if already saved) ──
+        from bot.database import db
+        if db:
+            cached_doc = await db.find_cached_file(anime_title, episode_key, quality_pref)
+            if cached_doc and cached_doc.get("file_id"):
+                clean_slug = re.sub(r'[^a-zA-Z0-9_-]', '_', anime_title)
+                cached_quality = cached_doc.get("quality", quality_pref)
+                filename = f"{clean_slug}_{episode_key}_{cached_quality}.mp4"
+                try:
+                    await client.send_document(
+                        chat_id=chat_id,
+                        document=cached_doc["file_id"],
+                        file_name=filename,
+                        caption=f"📦 <b>{display_title}</b> [{cached_quality}]\n<i>⚡ From library — instant delivery!</i>",
+                        parse_mode=enums.ParseMode.HTML,
+                    )
+                    await status_msg.edit_text(
+                        f"✅ <b>{name}</b>: <b>{display_title}</b> [{cached_quality}] is already in the library!\n<i>⚡ Delivered instantly from cache without re-downloading.</i>",
+                        parse_mode=enums.ParseMode.HTML,
+                    )
+                    return f"Found '{display_title}' [{cached_quality}] in library. Delivered instantly to Telegram chat {chat_id} from cache without re-downloading."
+                except Exception as e:
+                    log.warning("Cached delivery failed in AI download, will re-download: %s", e)
+                    await db.files.delete_one({"_id": cached_doc["_id"]})
+
+        await status_msg.edit_text(
+            f"🤖 <b>{name}</b>: Locating episode <b>{display_title}</b> [{quality_pref}]...",
             parse_mode=enums.ParseMode.HTML,
         )
 
@@ -973,9 +1005,54 @@ async def tool_download_anime_episode(
         )
 
         if success and sent_msg:
+            file_id = None
+            file_unique_id = None
+            if sent_msg.video:
+                file_id = sent_msg.video.file_id
+                file_unique_id = sent_msg.video.file_unique_id
+            elif sent_msg.document:
+                file_id = sent_msg.document.file_id
+                file_unique_id = sent_msg.document.file_unique_id
+
+            if file_id and file_unique_id:
+                slug_base = re.sub(r'[^a-zA-Z0-9]+', '-', anime_title).strip('-').lower()
+                series_slug = f"{slug_base}-season-{season:02d}" if season > 1 else slug_base
+                display_series_title = anime_title.title()
+
+                # 1. Save to Main Channel Library (creates/updates series album post)
+                from bot.library import library_manager
+                if library_manager:
+                    try:
+                        await library_manager.save_to_library(
+                            series_slug=series_slug,
+                            series_title=display_series_title,
+                            quality=quality_pref,
+                            episode_key=episode_key,
+                            file_id=file_id,
+                            file_unique_id=file_unique_id,
+                            poster_url=poster_url,
+                        )
+                    except Exception as le:
+                        log.warning("Library save failed for AI download: %s", le)
+
+                # 2. Save file reference in MongoDB for duplicate prevention
+                from bot.database import db
+                if db:
+                    try:
+                        await db.save_file(
+                            series_slug=series_slug,
+                            series_title=display_series_title,
+                            quality=quality_pref,
+                            episode_key=episode_key,
+                            file_id=file_id,
+                            file_unique_id=file_unique_id,
+                        )
+                    except Exception as de:
+                        log.warning("DB save failed for AI download: %s", de)
+
             return (
                 f"Success: Successfully downloaded and delivered '{display_title}' [{quality_pref}] "
-                f"to Telegram chat {chat_id} via {source_used}."
+                f"to Telegram chat {chat_id} via {source_used}, and saved to Main Channel Library."
             )
         return f"Download or upload failed for '{display_title}' via {source_used}."
     except Exception as e:
@@ -1003,7 +1080,35 @@ async def tool_download_and_send_anime(stream_url: str, title: str, quality: str
         name = ai_config.name
         status_msg = await client.send_message(
             chat_id=chat_id,
-            text=f"🤖 <b>{name}</b>: Initiating download for <b>{title}</b> [{quality}]...",
+            text=f"🤖 <b>{name}</b>: Checking library for <b>{title}</b> [{quality}]...",
+            parse_mode=enums.ParseMode.HTML,
+        )
+
+        # Check cache first
+        from bot.database import db
+        if db:
+            cached_doc = await db.find_cached_file(title, "", quality)
+            if cached_doc and cached_doc.get("file_id"):
+                clean_filename = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', title)}_{cached_doc.get('quality', quality)}.mp4"
+                try:
+                    await client.send_document(
+                        chat_id=chat_id,
+                        document=cached_doc["file_id"],
+                        file_name=clean_filename,
+                        caption=f"📦 <b>{title}</b> [{cached_doc.get('quality', quality)}]\n<i>⚡ From library — instant delivery!</i>",
+                        parse_mode=enums.ParseMode.HTML,
+                    )
+                    await status_msg.edit_text(
+                        f"✅ <b>{name}</b>: <b>{title}</b> is already in library!\n<i>⚡ Delivered instantly from cache.</i>",
+                        parse_mode=enums.ParseMode.HTML,
+                    )
+                    return f"'{title}' was already in library. Delivered instantly to chat {chat_id} from cache without re-downloading."
+                except Exception as e:
+                    log.warning("Cached delivery failed in tool_download_and_send_anime: %s", e)
+                    await db.files.delete_one({"_id": cached_doc["_id"]})
+
+        await status_msg.edit_text(
+            f"🤖 <b>{name}</b>: Initiating download for <b>{title}</b> [{quality}]...",
             parse_mode=enums.ParseMode.HTML,
         )
 
@@ -1019,7 +1124,47 @@ async def tool_download_and_send_anime(stream_url: str, title: str, quality: str
         )
 
         if success and sent_msg:
-            return f"Success: Downloaded and uploaded '{title}' [{quality}] directly to Telegram chat {chat_id}."
+            file_id = None
+            file_unique_id = None
+            if sent_msg.video:
+                file_id = sent_msg.video.file_id
+                file_unique_id = sent_msg.video.file_unique_id
+            elif sent_msg.document:
+                file_id = sent_msg.document.file_id
+                file_unique_id = sent_msg.document.file_unique_id
+
+            if file_id and file_unique_id:
+                slug = re.sub(r'[^a-zA-Z0-9]+', '-', title).strip('-').lower()
+                from bot.library import library_manager
+                if library_manager:
+                    try:
+                        await library_manager.save_to_library(
+                            series_slug=slug,
+                            series_title=title.title(),
+                            quality=quality,
+                            episode_key="movie",
+                            file_id=file_id,
+                            file_unique_id=file_unique_id,
+                            is_movie=True,
+                        )
+                    except Exception as le:
+                        log.warning("Library save failed in tool_download_and_send_anime: %s", le)
+
+                from bot.database import db
+                if db:
+                    try:
+                        await db.save_file(
+                            series_slug=slug,
+                            series_title=title.title(),
+                            quality=quality,
+                            episode_key="movie",
+                            file_id=file_id,
+                            file_unique_id=file_unique_id,
+                        )
+                    except Exception as de:
+                        log.warning("DB save failed in tool_download_and_send_anime: %s", de)
+
+            return f"Success: Downloaded and uploaded '{title}' [{quality}] directly to Telegram chat {chat_id}, and saved to Main Channel Library."
         return f"Download or upload failed for '{title}'. Check server logs for details."
     except Exception as e:
         log.exception("tool_download_and_send_anime failed")

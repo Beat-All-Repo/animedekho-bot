@@ -257,20 +257,41 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
     title = data.get("title", ep_slug)
     raw_servers = data["servers"]
 
+    # Extract season/episode info for filename and ToonFlix lookup
+    import re
+    m = re.match(r".*-(\d+)x(\d+)", ep_slug)
+    season = int(m.group(1)) if m else 1
+    ep_num = int(m.group(2)) if m else 1
+    series_slug = extract_series_slug(ep_slug) or ""
+    series_title = slug_to_title(series_slug) if series_slug else title
+    episode_key = f"S{season:02d}E{ep_num:02d}" if season and ep_num else ""
+
+    # ── Immediate Cache Check: Skip all resolution if already downloaded ──
+    from bot.database import db
+    if db and series_slug and episode_key:
+        cached_doc = await db.find_cached_file(series_slug or series_title, episode_key, quality_pref)
+        if cached_doc and cached_doc.get("file_id"):
+            cached_q = cached_doc.get("quality", quality_pref)
+            disp_title = f"{series_title or cached_doc.get('series_title', 'Anime')} {episode_key}"
+            filename = make_episode_filename(series_title or cached_doc.get("series_title", "Anime"), season, ep_num, cached_q)
+            try:
+                await q.message.reply_document(
+                    document=cached_doc["file_id"],
+                    file_name=filename,
+                    caption=f"📦 <b>{esc(disp_title)}</b> [{cached_q}]\n<i>⚡ From library — instant delivery!</i>",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+                return
+            except Exception as e:
+                log.warning("Cached file delivery failed: %s", e)
+                await db.files.delete_one({"_id": cached_doc["_id"]})
+
     # Lazy resolve: prioritize servers matching requested quality
     resolved = await _lazy_resolve_servers(raw_servers, quality_pref)
     if resolved:
         _store_servers(chat_id, ep_slug, resolved, title)
 
     candidates = _find_quality_candidates(resolved or raw_servers, quality_pref)
-
-    # Extract season/episode info for filename and ToonFlix lookup
-    import re
-    m = re.match(r".*-(\d+)x(\d+)", ep_slug)
-    season = int(m.group(1)) if m else 1
-    ep_num = int(m.group(2)) if m else 1
-    series_slug = extract_series_slug(ep_slug)
-    series_title = slug_to_title(series_slug) if series_slug else title
 
     # Quality fallback logic:
     # If user wants 4K: AnimeDekho lacks 4K -> AnimeDrive is default for 4K.
@@ -426,6 +447,26 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
 
     title = data.get("title", slug_to_title(movie_slug))
     poster_url = (data.get("poster_url") if data else "") or _poster_cache.get(movie_slug, "")
+
+    # ── Immediate Cache Check: Avoid scraping if movie already downloaded ──
+    from bot.database import db
+    if db:
+        cached_doc = await db.find_cached_file(movie_slug, "movie", quality_pref)
+        if cached_doc and cached_doc.get("file_id"):
+            cached_q = cached_doc.get("quality", quality_pref)
+            filename = make_movie_filename(title, cached_q)
+            try:
+                await q.message.reply_document(
+                    document=cached_doc["file_id"],
+                    file_name=filename,
+                    caption=f"📦 <b>{esc(title)}</b> [{cached_q}]\n<i>⚡ From library — instant delivery!</i>",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+                return
+            except Exception as e:
+                log.warning("Cached movie delivery failed: %s", e)
+                await db.files.delete_one({"_id": cached_doc["_id"]})
+
     raw_servers = data["servers"]
 
     resolved = await _lazy_resolve_servers(raw_servers, quality_pref)
@@ -871,7 +912,10 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
             await bot.logger.bot_logger.log_download_complete(title, chosen_quality.resolution, 0)
 
         # Save to library if upload succeeded
-        if success and sent_msg and series_slug:
+        if success and sent_msg:
+            if not series_slug:
+                import re
+                series_slug = re.sub(r'[^a-zA-Z0-9]+', '-', title).strip('-').lower() or "series"
             file_id = None
             file_unique_id = None
             if sent_msg.video:

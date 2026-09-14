@@ -85,19 +85,103 @@ class Database:
 
     # ── File cache (duplicate prevention) ────────────────────────
 
+    async def find_cached_file(
+        self,
+        series_identifier: str,
+        episode_key: str = "",
+        quality: str = "",
+    ) -> dict | None:
+        """
+        Flexible lookup for a cached anime file in DB.
+        Matches series by slug, clean slug, or title (case-insensitive regex),
+        normalizes episode keys (e.g. S1E1 == S01E01, movie),
+        and matches quality (or any quality if quality='auto' or empty).
+        Returns dict with file_id, quality, episode_key, series_title, series_slug or None.
+        """
+        import re
+
+        clean_id = (series_identifier or "").strip()
+        if not clean_id:
+            return None
+
+        # Build episode query condition if specified
+        ep_condition = None
+        if episode_key:
+            ep_clean = episode_key.strip()
+            if ep_clean.lower() in ("movie", "film"):
+                ep_condition = {"$in": ["movie", "Movie", "MOVIE"]}
+            else:
+                m = re.search(r"S(\d+)E(\d+)", ep_clean, re.I)
+                if m:
+                    s_num, ep_num = int(m.group(1)), int(m.group(2))
+                    variants = {
+                        f"S{s_num:02d}E{ep_num:02d}",
+                        f"S{s_num}E{ep_num}",
+                        f"S{s_num:02d}E{ep_num}",
+                        f"S{s_num}E{ep_num:02d}",
+                        f"s{s_num:02d}e{ep_num:02d}",
+                    }
+                    ep_condition = {"$in": list(variants)}
+                else:
+                    ep_condition = {"$regex": f"^{re.escape(ep_clean)}$", "$options": "i"}
+
+        # Build quality condition
+        q_condition = None
+        if quality and quality.lower() not in ("auto", "any", ""):
+            q_clean = quality.strip()
+            if q_clean.lower() in ("4k", "2160p", "2160"):
+                q_condition = {"$in": ["4K", "4k", "2160p", "2160P", "2160"]}
+            else:
+                q_condition = {"$regex": f"^{re.escape(q_clean)}$", "$options": "i"}
+
+        # Build series matching criteria
+        slug_candidate = re.sub(r'[^a-zA-Z0-9]+', '-', clean_id).strip('-').lower()
+        core_title = re.sub(r'(?i)\s*(season\s*\d+|s\d+|hindi|dubbed|multi-audio|tamil|telugu).*$', '', clean_id).strip()
+        core_slug = re.sub(r'[^a-zA-Z0-9]+', '-', core_title).strip('-').lower()
+
+        series_clauses = [
+            {"series_slug": clean_id},
+            {"series_slug": slug_candidate},
+            {"series_slug": {"$regex": f"^{re.escape(slug_candidate)}", "$options": "i"}},
+            {"series_title": {"$regex": f"^{re.escape(clean_id)}$", "$options": "i"}},
+        ]
+        if core_title and core_title != clean_id:
+            series_clauses.append({"series_title": {"$regex": f"^{re.escape(core_title)}", "$options": "i"}})
+        if core_slug and core_slug != slug_candidate:
+            series_clauses.append({"series_slug": {"$regex": f"^{re.escape(core_slug)}", "$options": "i"}})
+
+        query: dict = {"$or": series_clauses}
+        if ep_condition:
+            query["episode_key"] = ep_condition
+        if q_condition:
+            query["quality"] = q_condition
+
+        # 1. Try matching with exact criteria
+        doc = await self.files.find_one(query)
+        if doc:
+            return doc
+
+        # 2. Try direct series_slug match if not matched above
+        direct_query = {"series_slug": clean_id}
+        if ep_condition:
+            direct_query["episode_key"] = ep_condition
+        if q_condition:
+            direct_query["quality"] = q_condition
+        doc = await self.files.find_one(direct_query)
+        if doc:
+            return doc
+
+        return None
+
     async def get_cached_file(
         self, series_slug: str, quality: str, episode_key: str
     ) -> str | None:
         """
-        Check if this exact series+quality+episode was already downloaded.
+        Check if this series+quality+episode was already downloaded.
         Returns file_id if cached, None otherwise.
         """
-        doc = await self.files.find_one({
-            "series_slug": series_slug,
-            "quality": quality,
-            "episode_key": episode_key,
-        })
-        return doc["file_id"] if doc else None
+        cached = await self.find_cached_file(series_slug, episode_key, quality)
+        return cached["file_id"] if cached else None
 
     async def save_file(
         self,
