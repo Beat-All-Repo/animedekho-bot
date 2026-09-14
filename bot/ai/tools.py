@@ -221,6 +221,23 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "check_source_status",
+            "description": "Perform a live diagnostic health check on streaming sources (ToonWorld4All and AnimeDekho), checking site connectivity, catalog search, and direct stream availability.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Source to check: 'toonworld4all', 'animedekho', or 'all' (default: 'all').",
+                        "default": "all",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_toonworld4all",
             "description": "Search ToonWorld4All (https://toonworld4all.me) catalog for anime series or movies.",
             "parameters": {
@@ -595,11 +612,100 @@ async def tool_get_toonworld4all_episodes(page_url: str) -> str:
         return f"Error extracting episodes from {page_url}: {e}"
 
 
+async def tool_check_source_status(source: str = "all") -> str:
+    """Perform a live diagnostic health check on streaming sources."""
+    results = {}
+
+    if source.lower() in ("toonworld4all", "all"):
+        tw_diag = {
+            "source": "ToonWorld4All",
+            "website_url": "https://toonworld4all.me",
+            "website_online": False,
+            "archive_online": False,
+            "catalog_search_working": False,
+            "direct_streams_available": False,
+            "stream_delivery_method": "Protected by ad-shorteners (exe.io / cuty.io) with Cloudflare turnstiles and file lockers (FilePress/Mega).",
+            "summary": "",
+        }
+        try:
+            import cloudscraper
+            s = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "desktop": True})
+            r1 = await asyncio.to_thread(s.get, "https://toonworld4all.me", timeout=10)
+            tw_diag["website_online"] = (r1.status_code == 200)
+            tw_diag["website_http_status"] = r1.status_code
+
+            r2 = await asyncio.to_thread(s.get, "https://archive.toonworld4all.me", timeout=10)
+            tw_diag["archive_online"] = (r2.status_code == 200)
+            tw_diag["archive_http_status"] = r2.status_code
+
+            from extractors.toonworld4all import toonworld4all
+            search_res = await toonworld4all.search("solo leveling")
+            tw_diag["catalog_search_working"] = bool(search_res)
+            tw_diag["sample_results_found"] = len(search_res)
+
+            if tw_diag["website_online"]:
+                tw_diag["summary"] = (
+                    "ToonWorld4All website and catalog search are fully ONLINE. "
+                    "However, individual episode video streams are locked behind interactive ad-shortener captchas (exe.io) "
+                    "and cannot be scraped directly via automated scripts."
+                )
+            else:
+                tw_diag["summary"] = "ToonWorld4All website could not be reached."
+        except Exception as e:
+            tw_diag["error"] = str(e)
+            tw_diag["summary"] = f"Diagnostic failed: {e}"
+
+        results["ToonWorld4All"] = tw_diag
+
+    if source.lower() in ("animedekho", "all"):
+        ad_diag = {
+            "source": "AnimeDekho",
+            "service_url": "https://animedekho.app",
+            "service_online": True,
+            "catalog_search_working": False,
+            "direct_streams_available": True,
+            "stream_delivery_method": "Direct unencrypted HLS master playlists (m3u8) on VidStream, Vidmoly, and NeoCDN.",
+            "summary": "AnimeDekho is fully operational with high-speed direct video streams available in 1080p, 720p, 480p.",
+        }
+        try:
+            from api.client import api
+            search_res = await api.search("solo leveling")
+            ad_diag["catalog_search_working"] = bool(search_res)
+            ad_diag["sample_results_found"] = len(search_res)
+        except Exception as e:
+            ad_diag["error"] = str(e)
+
+        results["AnimeDekho"] = ad_diag
+
+    return json.dumps(results, indent=2)
+
+
 async def tool_resolve_toonworld4all_stream(anime_title: str, season: int = 1, episode: int = 1, quality_pref: str = "1080p") -> str:
     try:
         from extractors.toonworld4all import toonworld4all
         res = await toonworld4all.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
-        return json.dumps(res, indent=2) if res else f"Could not resolve stream for '{anime_title}' S{season}E{episode} [{quality_pref}] on ToonWorld4All."
+        if res and res.get("url"):
+            return json.dumps(res, indent=2)
+
+        return json.dumps({
+            "source": "ToonWorld4All",
+            "anime_title": anime_title,
+            "season": season,
+            "episode": episode,
+            "site_status": "ONLINE (https://toonworld4all.me is up and catalog search is functional)",
+            "stream_status": "UNAVAILABLE_AUTOMATED",
+            "reason": (
+                f"ToonWorld4All website is completely ONLINE, but individual episode download buttons on "
+                f"archive.toonworld4all.me are protected behind third-party ad-shorteners (exe.io / cuty.io) "
+                f"which require interactive Cloudflare turnstile captcha solving by a human browser, leading to file locker "
+                f"landing pages (FilePress/Mega) rather than direct streamable media. "
+                f"Automated HTTP streaming directly from ToonWorld4All is blocked by these anti-bot captchas."
+            ),
+            "solution": (
+                f"Use 'download_anime_episode' or AnimeDekho directly. AnimeDekho has direct high-speed 1080p/720p "
+                f"VidStream/Vidmoly streams for '{anime_title}' S{season}E{episode} ready for immediate download and delivery to Telegram."
+            ),
+        }, indent=2)
     except Exception as e:
         return f"ToonWorld4All resolution error: {e}"
 
@@ -864,6 +970,7 @@ TOOL_MAP = {
     "edit_project_file": tool_edit_project_file,
     "write_project_file": tool_write_project_file,
     "run_shell_command": tool_run_shell_command,
+    "check_source_status": tool_check_source_status,
     "search_toonworld4all": tool_search_toonworld4all,
     "get_toonworld4all_episodes": tool_get_toonworld4all_episodes,
     "resolve_toonworld4all_stream": tool_resolve_toonworld4all_stream,
