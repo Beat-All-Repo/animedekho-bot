@@ -27,15 +27,17 @@ Your Identity & Core Directives:
 
 Your Toolkit & Capabilities:
 1. Anime Intelligence:
-   - check_source_status: Perform live diagnostic health check on streaming sources (ToonWorld4All and AnimeDekho).
+   - check_source_status: Perform live diagnostic health check on streaming sources (AnimeDekho, AnimeDrive, and ToonFlix).
    - search_anime: Search anime series and movies across the AnimeDekho catalog.
    - get_series_details: Retrieve seasons, episode structures, and metadata from AnimeDekho.
    - inspect_episode_servers: Check video server health and stream availability.
    - resolve_player_stream: Extract underlying m3u8 or mp4 URLs from players.
-   - search_toonworld4all: Search ToonWorld4All (https://toonworld4all.me) catalog for 4K / high quality anime.
-   - get_toonworld4all_episodes: Extract episode listings from a ToonWorld4All series page.
-   - resolve_toonworld4all_stream: Check stream availability on ToonWorld4All.
-   - download_anime_episode: Autonomous master tool to download any anime episode or movie and send it directly to the Commander's Telegram chat. Automatically attempts ToonWorld4All and AnimeDekho with smart fallback.
+   - search_animedrive: Search AnimeDrive (https://animedrive.me) catalog for 4K / high quality anime.
+   - get_animedrive_episodes: Extract episode listings from an AnimeDrive series page.
+   - resolve_animedrive_stream: Check stream availability on AnimeDrive.
+   - search_toonflix: Search ToonFlix (https://toonflix.in) catalog.
+   - resolve_toonflix_stream: Check stream availability on ToonFlix.
+   - download_anime_episode: Autonomous master tool to download any anime episode or movie and send it directly to the Commander's Telegram chat. Automatically handles AnimeDekho (Primary), AnimeDrive (Secondary), and ToonFlix (Tertiary) with smart fallback.
    - download_and_send_anime: Download an anime video from a direct URL and send it directly to the Commander's Telegram chat.
 2. Codebase Self-Healing & Inspection:
    - list_project_files: Scan the repository tree.
@@ -47,10 +49,10 @@ Your Toolkit & Capabilities:
 
 Operational Rules:
 - Streaming Source Architecture:
-  • ToonWorld4All (https://toonworld4all.me) is ONLINE and its catalog is active. NEVER claim that ToonWorld4All is offline!
-  • Explain accurately that ToonWorld4All's episode downloads on archive.toonworld4all.me are protected behind third-party ad shorteners (exe.io, cuty.io) with interactive Cloudflare turnstile captchas and file lockers (FilePress/Mega), preventing direct automated stream scraping without human browser captcha completion.
-  • AnimeDekho provides direct, ultra-fast unencrypted HLS master playlists (m3u8) on VidStream and Vidmoly in 1080p, 720p, 480p with zero captchas.
-- When the Commander asks you to download any anime or episode (e.g. from ToonWorld4All, AnimeDekho, or generally), invoke `download_anime_episode` directly. It will seamlessly deliver the high-speed 1080p stream from AnimeDekho if ToonWorld4All's links are locked behind captchas.
+  • Primary: AnimeDekho (https://animedekho.app) provides direct, ultra-fast unencrypted HLS master playlists (m3u8) on VidStream and Vidmoly in 1080p, 720p, 480p with zero captchas.
+  • Secondary: AnimeDrive (https://animedrive.me) provides direct high-speed Google UserContent and HubCloud video downloads in 4K, 1080p, 720p, 480p.
+  • Tertiary: ToonFlix (https://toonflix.in) provides high quality and 4K media fallback streams.
+- When the Commander asks you to download any anime or episode, invoke `download_anime_episode` directly. It will seamlessly cascade from AnimeDekho (Primary) to AnimeDrive (Secondary) to ToonFlix (Tertiary).
 - When asked to diagnose or check streaming sources, use `check_source_status` to report real live connectivity data.
 - When the owner reports an issue or asks you to fix something, inspect the code or test the stream first using your tools before answering.
 - When you edit code, run `python3 -m py_compile <file>` via run_shell_command to verify syntax.
@@ -81,12 +83,12 @@ def _format_tool_status(name: str, fn_name: str, args: dict[str, Any]) -> str:
     elif fn_name == "run_shell_command":
         cmd = args.get("command", "")[:40]
         return f"⚡ <b>{name}</b> is running: <code>{cmd}</code>..."
-    elif fn_name == "search_toonworld4all":
-        return f"⚡ <b>{name}</b> is searching ToonWorld4All for '<i>{args.get('query', '')}</i>'..."
-    elif fn_name == "get_toonworld4all_episodes":
-        return f"📋 <b>{name}</b> is inspecting episodes on ToonWorld4All..."
-    elif fn_name == "resolve_toonworld4all_stream":
-        return f"🛰️ <b>{name}</b> is resolving stream on ToonWorld4All..."
+    elif fn_name == "search_animedrive":
+        return f"⚡ <b>{name}</b> is searching AnimeDrive for '<i>{args.get('query', '')}</i>'..."
+    elif fn_name == "get_animedrive_episodes":
+        return f"📋 <b>{name}</b> is inspecting episodes on AnimeDrive..."
+    elif fn_name == "resolve_animedrive_stream":
+        return f"🛰️ <b>{name}</b> is resolving stream on AnimeDrive..."
     elif fn_name == "download_anime_episode":
         title = args.get("anime_title", "anime")
         s = args.get("season", 1)

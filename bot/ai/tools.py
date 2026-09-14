@@ -222,13 +222,13 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "check_source_status",
-            "description": "Perform a live diagnostic health check on streaming sources (ToonWorld4All and AnimeDekho), checking site connectivity, catalog search, and direct stream availability.",
+            "description": "Perform a live diagnostic health check on streaming sources: AnimeDekho (Primary), AnimeDrive (Secondary), and ToonFlix (Tertiary), checking site connectivity, catalog search, and direct stream availability.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "source": {
                         "type": "string",
-                        "description": "Source to check: 'toonworld4all', 'animedekho', or 'all' (default: 'all').",
+                        "description": "Source to check: 'animedekho', 'animedrive', 'toonflix', or 'all' (default: 'all').",
                         "default": "all",
                     }
                 },
@@ -238,14 +238,14 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "search_toonworld4all",
-            "description": "Search ToonWorld4All (https://toonworld4all.me) catalog for anime series or movies.",
+            "name": "search_animedrive",
+            "description": "Search AnimeDrive (https://animedrive.me) catalog for anime series or movies.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Anime or movie title to search on ToonWorld4All.",
+                        "description": "Anime or movie title to search on AnimeDrive.",
                     }
                 },
                 "required": ["query"],
@@ -255,14 +255,14 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "get_toonworld4all_episodes",
-            "description": "Extract available seasons and episodes from a ToonWorld4All series page.",
+            "name": "get_animedrive_episodes",
+            "description": "Extract available seasons and episodes from an AnimeDrive series page.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "page_url": {
                         "type": "string",
-                        "description": "Full URL to a series page on ToonWorld4All.",
+                        "description": "Full URL to a series page on AnimeDrive.",
                     }
                 },
                 "required": ["page_url"],
@@ -272,8 +272,8 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "resolve_toonworld4all_stream",
-            "description": "Resolve episode or movie stream from ToonWorld4All with AI-powered fallback (supports 4K, 1080p, 720p, 480p).",
+            "name": "resolve_animedrive_stream",
+            "description": "Resolve episode or movie stream from AnimeDrive (supports 4K, 1080p, 720p, 480p via fast HubCloud/Google servers).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -331,7 +331,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "download_anime_episode",
-            "description": "Autonomous master tool to download any anime episode or movie and send it directly to the Commander's Telegram chat. Automatically handles ToonWorld4All and AnimeDekho resolution with smart fallback.",
+            "description": "Autonomous master tool to download any anime episode or movie and send it directly to the Commander's Telegram chat. Automatically handles AnimeDekho (Primary), AnimeDrive (Secondary), and ToonFlix (Tertiary) with smart fallback.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -356,7 +356,7 @@ TOOL_DEFINITIONS = [
                     },
                     "source": {
                         "type": "string",
-                        "description": "Preferred source: 'auto', 'toonworld4all', or 'animedekho' (default: 'auto').",
+                        "description": "Preferred source: 'auto', 'animedekho', 'animedrive', or 'toonflix' (default: 'auto').",
                         "default": "auto",
                     },
                 },
@@ -368,7 +368,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "search_toonflix",
-            "description": "Search ToonFlix.in (legacy fallback).",
+            "description": "Search ToonFlix (https://toonflix.in) catalog for anime or movies.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -385,7 +385,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "resolve_toonflix_stream",
-            "description": "Resolve episode or movie stream from ToonFlix.in.",
+            "description": "Resolve episode or movie stream from ToonFlix (https://toonflix.in).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -594,72 +594,31 @@ async def tool_run_shell_command(command: str) -> str:
         return f"Error executing shell command: {e}"
 
 
-async def tool_search_toonworld4all(query: str) -> str:
+async def tool_search_animedrive(query: str) -> str:
     try:
-        from extractors.toonworld4all import toonworld4all
-        results = await toonworld4all.search(query)
-        return json.dumps(results[:10], indent=2) if results else f"No results on ToonWorld4All for '{query}'"
+        from extractors.animedrive import animedrive
+        results = await animedrive.search(query)
+        return json.dumps(results[:10], indent=2) if results else f"No results on AnimeDrive for '{query}'"
     except Exception as e:
-        return f"ToonWorld4All search error: {e}"
+        return f"AnimeDrive search error: {e}"
 
 
-async def tool_get_toonworld4all_episodes(page_url: str) -> str:
+async def tool_get_animedrive_episodes(page_url: str) -> str:
     try:
-        from extractors.toonworld4all import toonworld4all
-        eps = await toonworld4all.get_series_episodes(page_url)
+        from extractors.animedrive import animedrive
+        eps = await animedrive.get_series_episodes(page_url)
         return json.dumps(eps, indent=2) if eps else f"No episodes found on {page_url}"
     except Exception as e:
         return f"Error extracting episodes from {page_url}: {e}"
 
 
 async def tool_check_source_status(source: str = "all") -> str:
-    """Perform a live diagnostic health check on streaming sources."""
+    """Perform a live diagnostic health check on streaming sources: AnimeDekho, AnimeDrive, ToonFlix."""
     results = {}
-
-    if source.lower() in ("toonworld4all", "all"):
-        tw_diag = {
-            "source": "ToonWorld4All",
-            "website_url": "https://toonworld4all.me",
-            "website_online": False,
-            "archive_online": False,
-            "catalog_search_working": False,
-            "direct_streams_available": False,
-            "stream_delivery_method": "Protected by ad-shorteners (exe.io / cuty.io) with Cloudflare turnstiles and file lockers (FilePress/Mega).",
-            "summary": "",
-        }
-        try:
-            import cloudscraper
-            s = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "desktop": True})
-            r1 = await asyncio.to_thread(s.get, "https://toonworld4all.me", timeout=10)
-            tw_diag["website_online"] = (r1.status_code == 200)
-            tw_diag["website_http_status"] = r1.status_code
-
-            r2 = await asyncio.to_thread(s.get, "https://archive.toonworld4all.me", timeout=10)
-            tw_diag["archive_online"] = (r2.status_code == 200)
-            tw_diag["archive_http_status"] = r2.status_code
-
-            from extractors.toonworld4all import toonworld4all
-            search_res = await toonworld4all.search("solo leveling")
-            tw_diag["catalog_search_working"] = bool(search_res)
-            tw_diag["sample_results_found"] = len(search_res)
-
-            if tw_diag["website_online"]:
-                tw_diag["summary"] = (
-                    "ToonWorld4All website and catalog search are fully ONLINE. "
-                    "However, individual episode video streams are locked behind interactive ad-shortener captchas (exe.io) "
-                    "and cannot be scraped directly via automated scripts."
-                )
-            else:
-                tw_diag["summary"] = "ToonWorld4All website could not be reached."
-        except Exception as e:
-            tw_diag["error"] = str(e)
-            tw_diag["summary"] = f"Diagnostic failed: {e}"
-
-        results["ToonWorld4All"] = tw_diag
 
     if source.lower() in ("animedekho", "all"):
         ad_diag = {
-            "source": "AnimeDekho",
+            "source": "AnimeDekho (Primary)",
             "service_url": "https://animedekho.app",
             "service_online": True,
             "catalog_search_working": False,
@@ -671,43 +630,103 @@ async def tool_check_source_status(source: str = "all") -> str:
             from api.client import api
             search_res = await api.search("solo leveling")
             ad_diag["catalog_search_working"] = bool(search_res)
-            ad_diag["sample_results_found"] = len(search_res)
+            ad_diag["sample_results_found"] = len(search_res) if search_res else 0
         except Exception as e:
             ad_diag["error"] = str(e)
 
         results["AnimeDekho"] = ad_diag
 
+    if source.lower() in ("animedrive", "all"):
+        drv_diag = {
+            "source": "AnimeDrive (Secondary)",
+            "website_url": "https://animedrive.me",
+            "website_online": False,
+            "catalog_search_working": False,
+            "direct_streams_available": False,
+            "stream_delivery_method": "High-speed Google UserContent / HubCloud direct video downloads (4K, 1080p, 720p, 480p).",
+            "summary": "",
+        }
+        try:
+            import cloudscraper
+            s = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "desktop": True})
+            r1 = await asyncio.to_thread(s.get, "https://animedrive.me", timeout=10)
+            drv_diag["website_online"] = (r1.status_code == 200)
+            drv_diag["website_http_status"] = r1.status_code
+
+            from extractors.animedrive import animedrive
+            search_res = await animedrive.search("solo leveling")
+            drv_diag["catalog_search_working"] = bool(search_res)
+            drv_diag["sample_results_found"] = len(search_res) if search_res else 0
+
+            if drv_diag["website_online"] and drv_diag["catalog_search_working"]:
+                drv_diag["direct_streams_available"] = True
+                drv_diag["summary"] = (
+                    "AnimeDrive is fully ONLINE and operational. Direct Google UserContent and HubCloud streams "
+                    "in 1080p, 720p, and 480p are actively accessible."
+                )
+            elif drv_diag["website_online"]:
+                drv_diag["summary"] = "AnimeDrive website is ONLINE, but search returned no sample results."
+            else:
+                drv_diag["summary"] = "AnimeDrive website could not be reached."
+        except Exception as e:
+            drv_diag["error"] = str(e)
+            drv_diag["summary"] = f"Diagnostic failed: {e}"
+
+        results["AnimeDrive"] = drv_diag
+
+    if source.lower() in ("toonflix", "all"):
+        tf_diag = {
+            "source": "ToonFlix (Tertiary)",
+            "website_url": "https://toonflix.in",
+            "website_online": False,
+            "catalog_search_working": False,
+            "direct_streams_available": False,
+            "stream_delivery_method": "Direct Google Drive proxy / workers.dev streams in 4K, 1080p, 720p.",
+            "summary": "",
+        }
+        try:
+            import cloudscraper
+            s = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "desktop": True})
+            r_tf = await asyncio.to_thread(s.get, "https://toonflix.in", timeout=10)
+            tf_diag["website_online"] = (r_tf.status_code == 200)
+            tf_diag["website_http_status"] = r_tf.status_code
+
+            from extractors.toonflix import toonflix
+            tf_search = await toonflix.search("solo leveling")
+            tf_diag["catalog_search_working"] = bool(tf_search)
+            tf_diag["sample_results_found"] = len(tf_search) if tf_search else 0
+
+            if tf_diag["website_online"]:
+                tf_diag["direct_streams_available"] = True
+                tf_diag["summary"] = "ToonFlix is ONLINE as a tertiary fallback source with 4K and 1080p streams."
+            else:
+                tf_diag["summary"] = "ToonFlix website could not be reached."
+        except Exception as e:
+            tf_diag["error"] = str(e)
+            tf_diag["summary"] = f"Diagnostic failed: {e}"
+
+        results["ToonFlix"] = tf_diag
+
     return json.dumps(results, indent=2)
 
 
-async def tool_resolve_toonworld4all_stream(anime_title: str, season: int = 1, episode: int = 1, quality_pref: str = "1080p") -> str:
+async def tool_resolve_animedrive_stream(anime_title: str, season: int = 1, episode: int = 1, quality_pref: str = "1080p") -> str:
     try:
-        from extractors.toonworld4all import toonworld4all
-        res = await toonworld4all.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
+        from extractors.animedrive import animedrive
+        res = await animedrive.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
         if res and res.get("url"):
             return json.dumps(res, indent=2)
 
         return json.dumps({
-            "source": "ToonWorld4All",
+            "source": "AnimeDrive",
             "anime_title": anime_title,
             "season": season,
             "episode": episode,
-            "site_status": "ONLINE (https://toonworld4all.me is up and catalog search is functional)",
-            "stream_status": "UNAVAILABLE_AUTOMATED",
-            "reason": (
-                f"ToonWorld4All website is completely ONLINE, but individual episode download buttons on "
-                f"archive.toonworld4all.me are protected behind third-party ad-shorteners (exe.io / cuty.io) "
-                f"which require interactive Cloudflare turnstile captcha solving by a human browser, leading to file locker "
-                f"landing pages (FilePress/Mega) rather than direct streamable media. "
-                f"Automated HTTP streaming directly from ToonWorld4All is blocked by these anti-bot captchas."
-            ),
-            "solution": (
-                f"Use 'download_anime_episode' or AnimeDekho directly. AnimeDekho has direct high-speed 1080p/720p "
-                f"VidStream/Vidmoly streams for '{anime_title}' S{season}E{episode} ready for immediate download and delivery to Telegram."
-            ),
+            "stream_status": "NOT_FOUND",
+            "reason": f"Could not locate matching episode or stream for '{anime_title}' S{season}E{episode} [{quality_pref}] on AnimeDrive.",
         }, indent=2)
     except Exception as e:
-        return f"ToonWorld4All resolution error: {e}"
+        return f"AnimeDrive resolution error: {e}"
 
 
 async def _resolve_animedekho_stream(anime_title: str, season: int, episode: int, quality_pref: str) -> tuple[dict | None, str | None]:
@@ -804,51 +823,117 @@ async def tool_download_anime_episode(
 
         stream_url = None
         variant_url = ""
+        poster_url = ""
         source_used = None
         notes = []
 
-        # Step 1: Try ToonWorld4All if requested or in auto mode
-        if source.lower() in ("toonworld4all", "auto"):
-            try:
-                from extractors.toonworld4all import toonworld4all, is_playable_media_url
-                tw_res = await toonworld4all.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
-                if tw_res and tw_res.get("url") and is_playable_media_url(tw_res["url"]):
-                    stream_url = tw_res["url"]
-                    source_used = f"ToonWorld4All ({tw_res.get('server', 'Direct')})"
-                else:
-                    notes.append("ToonWorld4All link is protected by shortener/Cloudflare captcha or unavailable")
-            except Exception as e:
-                notes.append(f"ToonWorld4All error: {e}")
+        is_4k = quality_pref.lower() in ("4k", "2160p")
 
-        # Step 2: Fallback to AnimeDekho (ultra-fast direct HLS)
-        if not stream_url:
+        # Step 1: For 4K, AnimeDrive is DEFAULT! For other qualities, try AnimeDekho first
+        if is_4k and source.lower() in ("animedrive", "auto"):
             try:
                 await status_msg.edit_text(
-                    f"🤖 <b>{name}</b>: ToonWorld4All is locked/unavailable. Switching to AnimeDekho direct stream for <b>{display_title}</b> [{quality_pref}]...",
+                    f"🤖 <b>{name}</b>: Locating 4K UHD stream on AnimeDrive (Default for 4K) for <b>{display_title}</b>...",
                     parse_mode=enums.ParseMode.HTML,
                 )
             except Exception:
                 pass
 
-            stream_obj, srv_name = await _resolve_animedekho_stream(anime_title, season, episode, quality_pref)
-            if stream_obj and stream_obj.get("url"):
-                stream_url = stream_obj["url"]
-                source_used = srv_name
-                for q in stream_obj.get("qualities", []):
-                    if hasattr(q, "resolution") and q.resolution.lower() == quality_pref.lower() and q.url:
-                        variant_url = q.url
-                        break
-            else:
-                notes.append("AnimeDekho episode servers not available")
+            try:
+                from extractors.animedrive import animedrive, is_playable_media_url
+                ad_res = await animedrive.resolve_episode(anime_title, season=season, episode=episode, quality_pref="4K")
+                if ad_res and ad_res.get("url") and is_playable_media_url(ad_res["url"]) and ad_res.get("quality", "").lower() in ("4k", "2160p"):
+                    stream_url = ad_res["url"]
+                    source_used = f"AnimeDrive ({ad_res.get('server', 'Direct')})"
+                    if ad_res.get("poster"):
+                        poster_url = ad_res["poster"]
+                else:
+                    notes.append("AnimeDrive 4K stream not found")
+            except Exception as e:
+                notes.append(f"AnimeDrive error: {e}")
 
-        # Step 3: If still not resolved, try ToonFlix
-        if not stream_url:
+            # If AnimeDrive does not have 4K, switch to ToonFlix (also has 4K quality)
+            if not stream_url and source.lower() in ("toonflix", "auto"):
+                try:
+                    await status_msg.edit_text(
+                        f"🤖 <b>{name}</b>: AnimeDrive lacks 4K, switching to ToonFlix (4K) for <b>{display_title}</b>...",
+                        parse_mode=enums.ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    from extractors.toonflix import toonflix
+                    tf_res = await toonflix.resolve_episode(anime_title, season=season, episode=episode, quality_pref="4K")
+                    if tf_res and tf_res.get("url") and tf_res.get("quality", "").lower() in ("4k", "2160p"):
+                        stream_url = tf_res["url"]
+                        source_used = f"ToonFlix ({tf_res.get('server', 'Direct')})"
+                        if tf_res.get("poster"):
+                            poster_url = tf_res["poster"]
+                    else:
+                        notes.append("ToonFlix 4K stream not found")
+                except Exception as e:
+                    notes.append(f"ToonFlix error: {e}")
+
+        # Step 2: Try AnimeDekho for standard resolutions (Primary ultra-fast direct HLS)
+        if not stream_url and source.lower() in ("animedekho", "auto"):
+            try:
+                stream_obj, srv_name = await _resolve_animedekho_stream(anime_title, season, episode, quality_pref)
+                if stream_obj and stream_obj.get("url"):
+                    stream_url = stream_obj["url"]
+                    source_used = srv_name
+                    for q in stream_obj.get("qualities", []):
+                        if hasattr(q, "resolution") and q.resolution.lower() == quality_pref.lower() and q.url:
+                            variant_url = q.url
+                            break
+                else:
+                    notes.append("AnimeDekho episode servers not available")
+            except Exception as e:
+                notes.append(f"AnimeDekho error: {e}")
+
+        # Step 3: Secondary fallback to AnimeDrive for standard resolutions
+        if not stream_url and source.lower() in ("animedrive", "auto"):
+            try:
+                await status_msg.edit_text(
+                    f"🤖 <b>{name}</b>: Trying AnimeDrive (Secondary) for <b>{display_title}</b> [{quality_pref}]...",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+            except Exception:
+                pass
+
+            try:
+                from extractors.animedrive import animedrive, is_playable_media_url
+                ad_res = await animedrive.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
+                if ad_res and ad_res.get("url") and is_playable_media_url(ad_res["url"]):
+                    stream_url = ad_res["url"]
+                    source_used = f"AnimeDrive ({ad_res.get('server', 'Direct')})"
+                    if ad_res.get("poster"):
+                        poster_url = ad_res["poster"]
+                else:
+                    notes.append("AnimeDrive link not available")
+            except Exception as e:
+                notes.append(f"AnimeDrive error: {e}")
+
+        # Step 4: Tertiary fallback to ToonFlix
+        if not stream_url and source.lower() in ("toonflix", "auto"):
+            try:
+                await status_msg.edit_text(
+                    f"🤖 <b>{name}</b>: Trying ToonFlix (Tertiary) for <b>{display_title}</b> [{quality_pref}]...",
+                    parse_mode=enums.ParseMode.HTML,
+                )
+            except Exception:
+                pass
+
             try:
                 from extractors.toonflix import toonflix
                 tf_res = await toonflix.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
                 if tf_res and tf_res.get("url"):
                     stream_url = tf_res["url"]
                     source_used = f"ToonFlix ({tf_res.get('server', 'Direct')})"
+                    if tf_res.get("poster"):
+                        poster_url = tf_res["poster"]
+                else:
+                    notes.append("ToonFlix stream not available")
             except Exception as e:
                 notes.append(f"ToonFlix error: {e}")
 
@@ -884,6 +969,7 @@ async def tool_download_anime_episode(
             progress_msg=status_msg,
             client=client,
             variant_url=variant_url,
+            poster_url=poster_url,
         )
 
         if success and sent_msg:
@@ -971,9 +1057,9 @@ TOOL_MAP = {
     "write_project_file": tool_write_project_file,
     "run_shell_command": tool_run_shell_command,
     "check_source_status": tool_check_source_status,
-    "search_toonworld4all": tool_search_toonworld4all,
-    "get_toonworld4all_episodes": tool_get_toonworld4all_episodes,
-    "resolve_toonworld4all_stream": tool_resolve_toonworld4all_stream,
+    "search_animedrive": tool_search_animedrive,
+    "get_animedrive_episodes": tool_get_animedrive_episodes,
+    "resolve_animedrive_stream": tool_resolve_animedrive_stream,
     "download_anime_episode": tool_download_anime_episode,
     "download_and_send_anime": tool_download_and_send_anime,
     "search_toonflix": tool_search_toonflix,

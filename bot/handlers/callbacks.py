@@ -168,7 +168,9 @@ async def _handle_movie_detail(client: Client, q: CallbackQuery, slug: str):
     text += "\n📊 <b>Select quality to download:</b>"
 
     # Store raw servers — will be resolved on download
-    _store_servers(q.message.chat.id, f"movie:{slug}", movie.servers, movie.title)
+    if movie.poster:
+        _poster_cache[slug] = movie.poster
+    _store_servers(q.message.chat.id, f"movie:{slug}", movie.servers, movie.title, poster_url=movie.poster or "")
 
     markup = kb.quality_picker(default_qualities, slug, "mp:1", is_movie=True)
 
@@ -270,27 +272,71 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
     series_slug = extract_series_slug(ep_slug)
     series_title = slug_to_title(series_slug) if series_slug else title
 
-    # Fallback to ToonWorld4All if AnimeDekho lacks exact quality or if 4K was requested
+    # Quality fallback logic:
+    # If user wants 4K: AnimeDekho lacks 4K -> AnimeDrive is default for 4K.
+    # If AnimeDrive does NOT have 4K -> switch to ToonFlix (which also has 4K).
+    # If user wants another quality (e.g. 1080p) and AnimeDekho lacks it -> switch to AnimeDrive, then ToonFlix.
     has_exact = any(q.resolution.lower() == quality_pref.lower() for _, q in candidates)
-    if not has_exact or quality_pref.lower() in ("4k", "2160p"):
+    is_4k = quality_pref.lower() in ("4k", "2160p")
+
+    if not has_exact or is_4k:
+        found_4k = False
+
+        # Step 1: Secondary - AnimeDrive (DEFAULT for 4K)
         try:
-            from extractors.toonworld4all import toonworld4all
-            log.info("AnimeDekho lacks exact %s, checking ToonWorld4All fallback for '%s' S%dE%d", quality_pref, series_title, season, ep_num)
-            tw_res = await toonworld4all.resolve_episode(series_title, season=season, episode=ep_num, quality_pref=quality_pref)
-            if tw_res and tw_res.get("url"):
-                tw_srv = VideoServer(
-                    name="ToonWorld4All",
-                    player_url=tw_res["url"],
+            from extractors.animedrive import animedrive
+            log.info("Checking AnimeDrive for '%s' S%dE%d [%s]", series_title, season, ep_num, quality_pref)
+            ad_res = await animedrive.resolve_episode(series_title, season=season, episode=ep_num, quality_pref=quality_pref)
+            if ad_res and ad_res.get("url"):
+                ad_q = ad_res.get("quality", "").lower()
+                ad_srv = VideoServer(
+                    name="AnimeDrive",
+                    player_url=ad_res["url"],
                     is_resolved=True,
-                    qualities=[Quality(resolution=tw_res["quality"], url=tw_res["url"])],
+                    qualities=[Quality(resolution=ad_res["quality"], url=ad_res["url"])],
                 )
-                if tw_res["quality"].lower() == quality_pref.lower() or quality_pref.lower() in ("4k", "2160p"):
-                    candidates.insert(0, (tw_srv, tw_srv.qualities[0]))
+                if ad_res.get("poster") and series_slug and not _poster_cache.get(series_slug):
+                    _poster_cache[series_slug] = ad_res["poster"]
+                if is_4k and ad_q in ("4k", "2160p"):
+                    # Exact 4K found on AnimeDrive! AnimeDrive is default for 4K
+                    candidates.insert(0, (ad_srv, ad_srv.qualities[0]))
+                    has_exact = True
+                    found_4k = True
+                    log.info("AnimeDrive provided exact 4K stream for '%s' S%dE%d", series_title, season, ep_num)
+                elif not is_4k and ad_q == quality_pref.lower():
+                    # Exact requested quality found on AnimeDrive
+                    candidates.insert(0, (ad_srv, ad_srv.qualities[0]))
+                    has_exact = True
+                    log.info("Added AnimeDrive [%s] stream candidate", ad_res["quality"])
                 else:
-                    candidates.append((tw_srv, tw_srv.qualities[0]))
-                log.info("Added ToonWorld4All [%s] stream candidate", tw_res["quality"])
+                    candidates.append((ad_srv, ad_srv.qualities[0]))
         except Exception as e:
-            log.warning("ToonWorld4All resolution error: %s", e)
+            log.warning("AnimeDrive resolution error: %s", e)
+
+        # Step 2: Tertiary - ToonFlix (if exact quality or 4K not found on AnimeDrive)
+        if not has_exact or (is_4k and not found_4k):
+            try:
+                from extractors.toonflix import toonflix
+                log.info("Checking ToonFlix fallback for '%s' S%dE%d [%s]", series_title, season, ep_num, quality_pref)
+                tf_res = await toonflix.resolve_episode(series_title, season=season, episode=ep_num, quality_pref=quality_pref)
+                if tf_res and tf_res.get("url"):
+                    if tf_res.get("poster") and series_slug and not _poster_cache.get(series_slug):
+                        _poster_cache[series_slug] = tf_res["poster"]
+                    tf_q = tf_res.get("quality", "").lower()
+                    tf_srv = VideoServer(
+                        name="ToonFlix",
+                        player_url=tf_res["url"],
+                        is_resolved=True,
+                        qualities=[Quality(resolution=tf_res["quality"], url=tf_res["url"])],
+                    )
+                    if (is_4k and tf_q in ("4k", "2160p")) or (not is_4k and tf_q == quality_pref.lower()):
+                        candidates.insert(0, (tf_srv, tf_srv.qualities[0]))
+                        has_exact = True
+                        log.info("ToonFlix provided exact %s stream candidate", tf_res["quality"])
+                    else:
+                        candidates.append((tf_srv, tf_srv.qualities[0]))
+            except Exception as e:
+                log.warning("ToonFlix resolution error: %s", e)
 
     if not candidates:
         await _safe_edit(q, "⚠️ No downloadable URL found on any server.")
@@ -379,35 +425,81 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
         return
 
     title = data.get("title", slug_to_title(movie_slug))
+    poster_url = (data.get("poster_url") if data else "") or _poster_cache.get(movie_slug, "")
     raw_servers = data["servers"]
 
     resolved = await _lazy_resolve_servers(raw_servers, quality_pref)
     if resolved:
-        _store_servers(chat_id, f"movie:{movie_slug}", resolved, title)
+        _store_servers(chat_id, f"movie:{movie_slug}", resolved, title, poster_url=poster_url)
 
     candidates = _find_quality_candidates(resolved or raw_servers, quality_pref)
 
-    # Fallback to ToonWorld4All if AnimeDekho lacks exact quality or if 4K was requested
+    # Quality fallback logic for movies:
+    # If user wants 4K: AnimeDekho lacks 4K -> AnimeDrive is default for 4K.
+    # If AnimeDrive does NOT have 4K -> switch to ToonFlix (which also has 4K).
+    # If user wants another quality (e.g. 1080p) and AnimeDekho lacks it -> switch to AnimeDrive, then ToonFlix.
     has_exact = any(q.resolution.lower() == quality_pref.lower() for _, q in candidates)
-    if not has_exact or quality_pref.lower() in ("4k", "2160p"):
+    is_4k = quality_pref.lower() in ("4k", "2160p")
+
+    if not has_exact or is_4k:
+        found_4k = False
+
+        # Step 1: Secondary - AnimeDrive (DEFAULT for 4K)
         try:
-            from extractors.toonworld4all import toonworld4all
-            log.info("AnimeDekho lacks exact %s, checking ToonWorld4All fallback for movie '%s'", quality_pref, title)
-            tw_res = await toonworld4all.resolve_episode(title, season=1, episode=1, quality_pref=quality_pref)
-            if tw_res and tw_res.get("url"):
-                tw_srv = VideoServer(
-                    name="ToonWorld4All",
-                    player_url=tw_res["url"],
+            from extractors.animedrive import animedrive
+            log.info("Checking AnimeDrive for movie '%s' [%s]", title, quality_pref)
+            ad_res = await animedrive.resolve_episode(title, season=1, episode=1, quality_pref=quality_pref)
+            if ad_res and ad_res.get("url"):
+                if ad_res.get("poster") and not poster_url:
+                    poster_url = ad_res["poster"]
+                    _poster_cache[movie_slug] = poster_url
+                ad_q = ad_res.get("quality", "").lower()
+                ad_srv = VideoServer(
+                    name="AnimeDrive",
+                    player_url=ad_res["url"],
                     is_resolved=True,
-                    qualities=[Quality(resolution=tw_res["quality"], url=tw_res["url"])],
+                    qualities=[Quality(resolution=ad_res["quality"], url=ad_res["url"])],
                 )
-                if tw_res["quality"].lower() == quality_pref.lower() or quality_pref.lower() in ("4k", "2160p"):
-                    candidates.insert(0, (tw_srv, tw_srv.qualities[0]))
+                if is_4k and ad_q in ("4k", "2160p"):
+                    # Exact 4K found on AnimeDrive! AnimeDrive is default for 4K
+                    candidates.insert(0, (ad_srv, ad_srv.qualities[0]))
+                    has_exact = True
+                    found_4k = True
+                    log.info("AnimeDrive provided exact 4K movie stream for '%s'", title)
+                elif not is_4k and ad_q == quality_pref.lower():
+                    candidates.insert(0, (ad_srv, ad_srv.qualities[0]))
+                    has_exact = True
+                    log.info("Added AnimeDrive movie candidate [%s]", ad_res["quality"])
                 else:
-                    candidates.append((tw_srv, tw_srv.qualities[0]))
-                log.info("Added ToonWorld4All movie candidate [%s]", tw_res["quality"])
+                    candidates.append((ad_srv, ad_srv.qualities[0]))
         except Exception as e:
-            log.warning("ToonWorld4All movie resolution error: %s", e)
+            log.warning("AnimeDrive movie resolution error: %s", e)
+
+        # Step 2: Tertiary - ToonFlix (if exact quality or 4K not found on AnimeDrive)
+        if not has_exact or (is_4k and not found_4k):
+            try:
+                from extractors.toonflix import toonflix
+                log.info("Checking ToonFlix fallback for movie '%s' [%s]", title, quality_pref)
+                tf_res = await toonflix.resolve_episode(title, season=1, episode=1, quality_pref=quality_pref)
+                if tf_res and tf_res.get("url"):
+                    if tf_res.get("poster") and not poster_url:
+                        poster_url = tf_res["poster"]
+                        _poster_cache[movie_slug] = poster_url
+                    tf_q = tf_res.get("quality", "").lower()
+                    tf_srv = VideoServer(
+                        name="ToonFlix",
+                        player_url=tf_res["url"],
+                        is_resolved=True,
+                        qualities=[Quality(resolution=tf_res["quality"], url=tf_res["url"])],
+                    )
+                    if (is_4k and tf_q in ("4k", "2160p")) or (not is_4k and tf_q == quality_pref.lower()):
+                        candidates.insert(0, (tf_srv, tf_srv.qualities[0]))
+                        has_exact = True
+                        log.info("ToonFlix provided exact %s movie candidate", tf_res["quality"])
+                    else:
+                        candidates.append((tf_srv, tf_srv.qualities[0]))
+            except Exception as e:
+                log.warning("ToonFlix movie resolution error: %s", e)
 
     if not candidates:
         await _safe_edit(q, "⚠️ No downloadable URL found on any server.")
@@ -452,6 +544,7 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
             client, chat_id, candidates, filename, title, progress_msg, user,
             series_slug=movie_slug,
             episode_key="movie",
+            poster_url=poster_url,
             is_movie=True,
         )
     )
@@ -583,6 +676,7 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                     chat_id, quality.master_url or quality.url, quality.resolution, filename,
                     f"{series.title} S{season}E{ep.number}",
                     ep_msg, client, variant_url=quality.url,
+                    poster_url=series.poster or "",
                 )
                 if success:
                     break
@@ -707,37 +801,71 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
             success, sent_msg = await download_and_upload(
                 chat_id, quality.master_url or quality.url, quality.resolution, filename, title, progress_msg, client,
                 variant_url=quality.url,
+                poster_url=poster_url or "",
             )
             if success:
                 break
 
-        if not success and not any(s.name in ("ToonWorld4All", "ToonFlix") for s, _ in candidates):
-            # Ultimate safety net: try ToonWorld4All before failing
+        if not success and not any(s.name in ("AnimeDrive", "ToonFlix") for s, _ in candidates):
+            # Fallback cascade: Secondary (AnimeDrive) -> Tertiary (ToonFlix)
+            import re
+            s_num, ep_num = 1, 1
+            if episode_key:
+                ep_m = re.match(r"S(\d+)E(\d+)", episode_key, re.I)
+                if ep_m:
+                    s_num = int(ep_m.group(1))
+                    ep_num = int(ep_m.group(2))
+
+            lookup_title = slug_to_title(series_slug) if series_slug else title
+
+            # Step 1: Secondary fallback to AnimeDrive (animedrive.me)
             try:
-                from extractors.toonworld4all import toonworld4all
+                from extractors.animedrive import animedrive
                 await progress_msg.edit_text(
-                    f"🔄 <b>AnimeDekho servers failed, trying ToonWorld4All fallback...</b>\n{esc(title)} [{chosen_quality.resolution}]",
+                    f"🔄 <b>AnimeDekho servers failed, trying AnimeDrive fallback...</b>\n{esc(title)} [{chosen_quality.resolution}]",
                     parse_mode=enums.ParseMode.HTML,
                 )
-                import re
-                s_num, ep_num = 1, 1
-                if episode_key:
-                    ep_m = re.match(r"S(\d+)E(\d+)", episode_key, re.I)
-                    if ep_m:
-                        s_num = int(ep_m.group(1))
-                        ep_num = int(ep_m.group(2))
-
-                lookup_title = slug_to_title(series_slug) if series_slug else title
-                tw_res = await toonworld4all.resolve_episode(lookup_title, season=s_num, episode=ep_num, quality_pref=chosen_quality.resolution)
-                if tw_res and tw_res.get("url"):
+                ad_res = await animedrive.resolve_episode(lookup_title, season=s_num, episode=ep_num, quality_pref=chosen_quality.resolution)
+                if ad_res and ad_res.get("url"):
+                    if ad_res.get("poster") and not poster_url:
+                        poster_url = ad_res["poster"]
+                        if series_slug:
+                            _poster_cache[series_slug] = poster_url
                     success, sent_msg = await download_and_upload(
-                        chat_id, tw_res["url"], tw_res["quality"], filename, title, progress_msg, client
+                        chat_id, ad_res["url"], ad_res["quality"], filename, title, progress_msg, client,
+                        referer=ad_res.get("referer", "https://hubcloud.ist/"),
+                        poster_url=poster_url or "",
                     )
                     if success:
                         from api.models import Quality
-                        chosen_quality = Quality(resolution=tw_res["quality"], url=tw_res["url"])
+                        chosen_quality = Quality(resolution=ad_res["quality"], url=ad_res["url"])
             except Exception as e:
-                log.warning("ToonWorld4All fallback in _do_download failed: %s", e)
+                log.warning("AnimeDrive fallback in _do_download failed: %s", e)
+
+            # Step 2: Tertiary fallback to ToonFlix (toonflix.in) if AnimeDrive also failed
+            if not success:
+                try:
+                    from extractors.toonflix import toonflix
+                    await progress_msg.edit_text(
+                        f"🔄 <b>Trying ToonFlix fallback...</b>\n{esc(title)} [{chosen_quality.resolution}]",
+                        parse_mode=enums.ParseMode.HTML,
+                    )
+                    tf_res = await toonflix.resolve_episode(lookup_title, season=s_num, episode=ep_num, quality_pref=chosen_quality.resolution)
+                    if tf_res and tf_res.get("url"):
+                        if tf_res.get("poster") and not poster_url:
+                            poster_url = tf_res["poster"]
+                            if series_slug:
+                                _poster_cache[series_slug] = poster_url
+                        success, sent_msg = await download_and_upload(
+                            chat_id, tf_res["url"], tf_res["quality"], filename, title, progress_msg, client,
+                            referer=tf_res.get("referer", "https://drive.toonflix.in/"),
+                            poster_url=poster_url or "",
+                        )
+                        if success:
+                            from api.models import Quality
+                            chosen_quality = Quality(resolution=tf_res["quality"], url=tf_res["url"])
+                except Exception as e:
+                    log.warning("ToonFlix fallback in _do_download failed: %s", e)
 
         if success and bot.logger.bot_logger:
             await bot.logger.bot_logger.log_download_complete(title, chosen_quality.resolution, 0)

@@ -178,12 +178,10 @@ def _get_origin(url: str) -> str:
         return "https://emturbovid.com"
     elif "xerver" in domain or "vidsrc" in domain or "googleusercontent" in domain:
         return "https://mirror.xerver.xyz"
+    elif "animedrive" in domain or "hubcloud" in domain or "gamerxyt" in domain:
+        return "https://hubcloud.ist"
     elif "toonflix" in domain or "workers.dev" in domain:
         return "https://drive.toonflix.in"
-    elif "toonworld4all" in domain or "tw4all" in domain:
-        return "https://toonworld4all.me"
-    elif "hubcloud" in domain:
-        return "https://hubcloud.ist"
     return f"https://{domain}"
 
 
@@ -532,6 +530,7 @@ async def download_media(
     progress_msg: Message | None = None,
     title: str = "video",
     variant_url: str = "",
+    referer: str = "",
 ) -> bool:
     """
     Unified multi-engine downloader:
@@ -549,7 +548,7 @@ async def download_media(
 
     if is_mp4:
         log.info("Detected direct MP4/file URL, using direct HTTP downloader")
-        ok = await direct_http_download(stream_url, output_path, progress_msg, title, quality)
+        ok = await direct_http_download(stream_url, output_path, progress_msg, title, quality, referer=referer)
         if ok:
             return True
         log.warning("Direct HTTP download failed, falling back to FFmpeg")
@@ -583,14 +582,24 @@ async def download_and_upload(
     progress_msg: Message,
     client: Client,
     variant_url: str = "",
+    referer: str = "",
+    poster_url: str = "",
 ) -> tuple[bool, Message | None]:
-    """Download video + upload via Pyrogram MTProto with progress."""
+    """Download video + upload via Pyrogram MTProto with progress and poster thumbnail."""
     output_path = str(_TEMP_BASE / filename)
     overall_start = time.time()
+    thumb_path = None
 
     try:
+        if poster_url:
+            try:
+                from bot.library import _download_poster
+                thumb_path = await _download_poster(poster_url)
+            except Exception as pe:
+                log.debug("Poster thumbnail download failed: %s", pe)
+
         success = await download_media(
-            stream_url, quality, output_path, progress_msg, title, variant_url=variant_url
+            stream_url, quality, output_path, progress_msg, title, variant_url=variant_url, referer=referer
         )
 
         if not success:
@@ -652,13 +661,27 @@ async def download_and_upload(
             f"└ 🔄 Starting upload...",
             parse_mode=enums.ParseMode.HTML)
 
-        sent_msg = await client.send_document(
-            chat_id=chat_id,
-            document=output_path,
-            file_name=filename,
-            caption=f"📺 {title} [{quality}]",
-            progress=_upload_progress,
-        )
+        try:
+            sent_msg = await client.send_document(
+                chat_id=chat_id,
+                document=output_path,
+                thumb=thumb_path,
+                file_name=filename,
+                caption=f"📺 {title} [{quality}]",
+                progress=_upload_progress,
+            )
+        except Exception as te:
+            if thumb_path:
+                log.warning("Upload with thumb failed, retrying without thumb: %s", te)
+                sent_msg = await client.send_document(
+                    chat_id=chat_id,
+                    document=output_path,
+                    file_name=filename,
+                    caption=f"📺 {title} [{quality}]",
+                    progress=_upload_progress,
+                )
+            else:
+                raise
 
         total_time = time.time() - overall_start
         await progress_msg.edit_text(
@@ -678,6 +701,11 @@ async def download_and_upload(
             pass
         return False, None
     finally:
+        try:
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
+        except Exception:
+            pass
         try:
             if os.path.exists(output_path):
                 os.remove(output_path)

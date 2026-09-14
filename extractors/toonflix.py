@@ -88,14 +88,17 @@ class ToonflixExtractor:
 
         # Step 2: Pick the best matching season page
         target_page_url = None
+        target_poster = None
         for res in search_results:
             t = res["title"].lower()
             if f"season {season:02d}" in t or f"season {season}" in t or (season == 1 and "season" not in t):
                 target_page_url = res["url"]
+                target_poster = res.get("poster")
                 break
 
         if not target_page_url:
             target_page_url = search_results[0]["url"]
+            target_poster = search_results[0].get("poster")
 
         log.info("ToonFlix: Inspecting season page: %s", target_page_url)
         try:
@@ -103,6 +106,12 @@ class ToonflixExtractor:
             if r_page.status_code != 200:
                 return None
             soup_page = BeautifulSoup(r_page.text, "html.parser")
+            if not target_poster:
+                tf_p = soup_page.find("div", class_="tf-poster")
+                if tf_p:
+                    p_img = tf_p.find("img")
+                    if p_img:
+                        target_poster = p_img.get("src") or p_img.get("data-src")
         except Exception as e:
             log.warning("ToonFlix: Failed to fetch season page: %s", e)
             return None
@@ -207,6 +216,7 @@ class ToonflixExtractor:
                 "quality": matched_quality,
                 "server": "ToonFlix",
                 "referer": "https://drive.toonflix.in/",
+                "poster": target_poster,
             }
         except Exception as e:
             log.warning("ToonFlix: Stream resolution failed: %s", e)
