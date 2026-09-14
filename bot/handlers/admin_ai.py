@@ -29,6 +29,7 @@ async def cmd_setai(client: Client, message: Message):
             f"• <code>/setai key &lt;API_KEY&gt;</code> — Set API key\n"
             f"• <code>/setai url &lt;BASE_URL&gt;</code> — Set base URL (OpenAI/Groq/OpenRouter/DeepSeek)\n"
             f"• <code>/setai model &lt;MODEL&gt;</code> — Set model name\n"
+            f"• <code>/setai limit &lt;NUMBER&gt;</code> — Set max tool iterations (default: 20)\n"
             f"• <code>/setai on</code> | <code>/setai off</code> — Bring agent online/offline\n"
             f"• <code>/setai clear</code> — Clear memory\n"
             f"• <code>/setai test</code> — Ping agent & verify tool readiness\n\n"
@@ -88,6 +89,14 @@ async def cmd_setai(client: Client, message: Message):
     elif subcmd in ("model", "model_name"):
         await ai_config.set_model(val)
         await message.reply_text(f"✅ Model updated to <code>{ai_config.model}</code>", parse_mode=enums.ParseMode.HTML)
+
+    elif subcmd in ("limit", "iterations", "max_iterations"):
+        try:
+            val_int = int(val)
+            await ai_config.set_max_iterations(val_int)
+            await message.reply_text(f"✅ Tool execution limit updated to <b>{ai_config.max_iterations}</b> iterations.", parse_mode=enums.ParseMode.HTML)
+        except ValueError:
+            await message.reply_text("⚠️ Please provide a valid integer (e.g. <code>/setai limit 20</code>).", parse_mode=enums.ParseMode.HTML)
 
     else:
         await message.reply_text(f"⚠️ Unknown setting '<code>{esc(subcmd)}</code>'. Type <code>/setai</code> for help.", parse_mode=enums.ParseMode.HTML)

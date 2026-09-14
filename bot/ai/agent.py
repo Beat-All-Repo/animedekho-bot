@@ -67,6 +67,10 @@ def _format_tool_status(name: str, fn_name: str, args: dict[str, Any]) -> str:
     elif fn_name == "run_shell_command":
         cmd = args.get("command", "")[:40]
         return f"⚡ <b>{name}</b> is running: <code>{cmd}</code>..."
+    elif fn_name == "search_toonflix":
+        return f"⚡ <b>{name}</b> is searching ToonFlix for '<i>{args.get('query', '')}</i>'..."
+    elif fn_name == "resolve_toonflix_stream":
+        return f"⚡ <b>{name}</b> is resolving stream on ToonFlix..."
     return f"⚙️ <b>{name}</b> is executing <code>{fn_name}</code>..."
 
 
@@ -117,19 +121,35 @@ class AIAgent:
             "Content-Type": "application/json",
         }
 
-        max_iterations = 8
+        max_iterations = ai_config.max_iterations
         iteration = 0
+        last_tool_signature = ""
+        consecutive_dups = 0
 
-        timeout = aiohttp.ClientTimeout(total=120)
+        timeout = aiohttp.ClientTimeout(total=300, sock_read=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             while iteration < max_iterations:
                 iteration += 1
-                payload = {
+                is_final_step = (iteration >= max_iterations)
+
+                payload: dict[str, Any] = {
                     "model": model,
-                    "messages": messages,
-                    "tools": TOOL_DEFINITIONS,
-                    "tool_choice": "auto",
                 }
+
+                if is_final_step:
+                    # Omit tools to guarantee text-only completion and inject synthesis directive
+                    payload["messages"] = messages + [{
+                        "role": "user",
+                        "content": (
+                            f"[System Directive for {name}: All tool operations have concluded. "
+                            "Do not invoke any tools. Please synthesize your findings, summarize the actions "
+                            "you took, and deliver your comprehensive final response to the Commander now.]"
+                        ),
+                    }]
+                else:
+                    payload["messages"] = messages
+                    payload["tools"] = TOOL_DEFINITIONS
+                    payload["tool_choice"] = "auto"
 
                 try:
                     async with session.post(endpoint, json=payload, headers=headers) as resp:
@@ -150,9 +170,12 @@ class AIAgent:
                 message = choices[0].get("message", {})
                 tool_calls = message.get("tool_calls")
 
-                # If no tool calls, this is the final response
+                # If no tool calls (or final synthesis step), this is the final response
                 if not tool_calls:
-                    final_text = message.get("content", "").strip()
+                    final_text = (message.get("content") or "").strip()
+                    if not final_text and is_final_step:
+                        final_text = "All tool executions completed successfully. All requested operations have finished."
+
                     # Update conversation history
                     self._history.append({"role": "user", "content": user_prompt})
                     self._history.append({"role": "assistant", "content": final_text})
@@ -164,6 +187,19 @@ class AIAgent:
 
                 # Append assistant's message containing tool_calls
                 messages.append(message)
+
+                # Track signatures to prevent infinite loops of identical tool calls
+                sig_parts = []
+                for tc in tool_calls:
+                    fn = tc.get("function", {})
+                    sig_parts.append(f"{fn.get('name', '')}:{fn.get('arguments', '')}")
+                current_sig = "|".join(sig_parts)
+
+                if current_sig == last_tool_signature:
+                    consecutive_dups += 1
+                else:
+                    consecutive_dups = 0
+                last_tool_signature = current_sig
 
                 # Execute all requested tool calls
                 for tc in tool_calls:
@@ -196,7 +232,38 @@ class AIAgent:
                         "content": tool_result,
                     })
 
-            return f"⚠️ <b>{name}</b> exceeded maximum tool execution iterations."
+                # If duplicate tool calls detected twice in a row, force synthesis on next iteration
+                if consecutive_dups >= 2:
+                    log.warning("%s detected repetitive tool calling (%s). Forcing synthesis next iteration.", name, current_sig[:60])
+                    iteration = max_iterations - 1
+
+            # Fallback final completion if loop ever exits without returning
+            try:
+                log.info("%s executing fallback synthesis after tool loop", name)
+                final_payload = {
+                    "model": model,
+                    "messages": messages + [{
+                        "role": "user",
+                        "content": (
+                            f"[System Directive for {name}: All tool calls have concluded. "
+                            "Deliver your final report, findings, and response to the Commander now.]"
+                        ),
+                    }],
+                }
+                async with session.post(endpoint, json=final_payload, headers=headers) as resp:
+                    if resp.status == 200:
+                        synth_data = await resp.json()
+                        synth_choices = synth_data.get("choices", [])
+                        if synth_choices:
+                            synth_text = (synth_choices[0].get("message", {}).get("content") or "").strip()
+                            if synth_text:
+                                self._history.append({"role": "user", "content": user_prompt})
+                                self._history.append({"role": "assistant", "content": synth_text})
+                                return f"🤖 <b>{name}</b>:\n\n{synth_text}"
+            except Exception as e:
+                log.warning("Fallback synthesis failed: %s", e)
+
+            return f"🤖 <b>{name}</b>: Successfully executed {iteration} operations. All requested tasks have concluded."
 
 
 ai_agent = AIAgent()

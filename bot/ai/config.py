@@ -19,6 +19,7 @@ class AIState:
         "Autonomous Senior Systems Engineer and Anime Intelligence Operative for AnimeDekho. "
         "Sharp, loyal, proactive, technically precise, and self-reliant."
     )
+    max_iterations: int = 20
 
 
 class AIConfigManager:
@@ -46,6 +47,7 @@ class AIConfigManager:
             saved_enabled = await db.get_config("ai_enabled")
             saved_name = await db.get_config("ai_name")
             saved_persona = await db.get_config("ai_persona")
+            saved_iterations = await db.get_config("ai_max_iterations")
 
             if saved_key is not None:
                 self._state.api_key = saved_key
@@ -59,10 +61,15 @@ class AIConfigManager:
                 self._state.name = str(saved_name)
             if saved_persona is not None:
                 self._state.persona = str(saved_persona)
+            if saved_iterations is not None:
+                try:
+                    self._state.max_iterations = int(saved_iterations)
+                except Exception:
+                    pass
 
             self._initialized = True
-            log.info("AI config loaded: name=%s model=%s base_url=%s enabled=%s",
-                     self._state.name, self._state.model, self._state.base_url, self._state.enabled)
+            log.info("AI config loaded: name=%s model=%s base_url=%s enabled=%s max_iterations=%d",
+                     self._state.name, self._state.model, self._state.base_url, self._state.enabled, self._state.max_iterations)
         except Exception as e:
             log.warning("Failed to load AI config from database: %s", e)
 
@@ -131,6 +138,16 @@ class AIConfigManager:
         if db:
             await db.set_config("ai_enabled", self._state.enabled)
 
+    @property
+    def max_iterations(self) -> int:
+        return self._state.max_iterations
+
+    async def set_max_iterations(self, limit: int):
+        self._state.max_iterations = max(5, min(int(limit), 50))
+        from bot.database import db
+        if db:
+            await db.set_config("ai_max_iterations", self._state.max_iterations)
+
     def get_status_summary(self) -> str:
         masked_key = (
             f"{self._state.api_key[:4]}...{self._state.api_key[-4:]}"
@@ -145,6 +162,7 @@ class AIConfigManager:
             f"• <b>Model:</b> <code>{self._state.model}</code>\n"
             f"• <b>Base URL:</b> <code>{self._state.base_url}</code>\n"
             f"• <b>API Key:</b> <code>{masked_key}</code>\n"
+            f"• <b>Tool Iteration Limit:</b> <code>{self._state.max_iterations}</code>\n"
         )
 
 
