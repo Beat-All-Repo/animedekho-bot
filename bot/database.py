@@ -20,6 +20,8 @@ class Database:
         self.files = self.db["files"]
         self.downloads = self.db["downloads"]
         self.config = self.db["config"]
+        self.ai_history = self.db["ai_history"]
+        self.ai_facts = self.db["ai_facts"]
 
     async def init_indexes(self):
         """Create necessary indexes."""
@@ -35,6 +37,8 @@ class Database:
         )
         await self.downloads.create_index("user_id")
         await self.downloads.create_index("timestamp")
+        await self.ai_history.create_index([("chat_id", 1), ("timestamp", 1)])
+        await self.ai_facts.create_index([("chat_id", 1), ("key", 1)], unique=True)
         log.info("MongoDB indexes created")
 
     # ── User management ───────────────────────────────────────────
@@ -230,6 +234,87 @@ class Database:
             "file_id": file_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+
+    # ── AI Persistent Memory & Conversation History ───────────────
+
+    async def save_ai_message(self, chat_id: int, role: str, content: str):
+        """Save a message to persistent AI conversation history for a chat."""
+        if not content:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            await self.ai_history.insert_one({
+                "chat_id": chat_id,
+                "role": role,
+                "content": content,
+                "timestamp": now,
+            })
+            # Keep latest 50 messages per chat to keep database bounded
+            count = await self.ai_history.count_documents({"chat_id": chat_id})
+            if count > 50:
+                oldest = await self.ai_history.find({"chat_id": chat_id}).sort("timestamp", 1).limit(count - 40).to_list(length=None)
+                if oldest:
+                    ids = [doc["_id"] for doc in oldest]
+                    await self.ai_history.delete_many({"_id": {"$in": ids}})
+        except Exception as e:
+            log.warning("Failed to save AI message: %s", e)
+
+    async def get_ai_history(self, chat_id: int, limit: int = 20) -> list[dict[str, str]]:
+        """Retrieve recent conversation history in chronological order (oldest to newest)."""
+        try:
+            cursor = self.ai_history.find(
+                {"chat_id": chat_id},
+                {"_id": 0, "role": 1, "content": 1},
+            ).sort("timestamp", -1).limit(limit)
+            docs = await cursor.to_list(length=limit)
+            docs.reverse()  # Oldest to newest
+            return docs
+        except Exception as e:
+            log.warning("Failed to retrieve AI history: %s", e)
+            return []
+
+    async def clear_ai_history(self, chat_id: int | None = None):
+        """Clear conversation history for a specific chat or all chats."""
+        try:
+            query = {"chat_id": chat_id} if chat_id is not None else {}
+            await self.ai_history.delete_many(query)
+        except Exception as e:
+            log.warning("Failed to clear AI history: %s", e)
+
+    async def save_ai_fact(self, chat_id: int, key: str, value: str):
+        """Save or update a persistent long-term memory fact / preference."""
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            await self.ai_facts.update_one(
+                {"chat_id": chat_id, "key": key.strip().lower()},
+                {"$set": {
+                    "chat_id": chat_id,
+                    "key": key.strip().lower(),
+                    "value": value.strip(),
+                    "updated_at": now,
+                }},
+                upsert=True,
+            )
+        except Exception as e:
+            log.warning("Failed to save AI memory fact: %s", e)
+
+    async def get_ai_facts(self, chat_id: int) -> list[dict]:
+        """Retrieve all stored permanent memory facts for a chat."""
+        try:
+            cursor = self.ai_facts.find({"chat_id": chat_id}, {"_id": 0, "key": 1, "value": 1, "updated_at": 1})
+            return await cursor.to_list(length=100)
+        except Exception as e:
+            log.warning("Failed to retrieve AI memory facts: %s", e)
+            return []
+
+    async def delete_ai_fact(self, chat_id: int, key: str) -> bool:
+        """Delete a specific permanent memory fact."""
+        try:
+            res = await self.ai_facts.delete_one({"chat_id": chat_id, "key": key.strip().lower()})
+            return res.deleted_count > 0
+        except Exception as e:
+            log.warning("Failed to delete AI memory fact: %s", e)
+            return False
 
     def close(self):
         """Close the MongoDB connection."""

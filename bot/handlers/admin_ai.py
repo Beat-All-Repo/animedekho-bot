@@ -31,7 +31,9 @@ async def cmd_setai(client: Client, message: Message):
             f"• <code>/setai model &lt;MODEL&gt;</code> — Set model name\n"
             f"• <code>/setai limit &lt;NUMBER&gt;</code> — Set max tool iterations (default: 20)\n"
             f"• <code>/setai on</code> | <code>/setai off</code> — Bring agent online/offline\n"
-            f"• <code>/setai clear</code> — Clear memory\n"
+            f"• <code>/setai memory</code> — View stored long-term memory & conversation stats\n"
+            f"• <code>/setai forget &lt;key&gt;</code> — Delete a specific permanent fact\n"
+            f"• <code>/setai clear</code> — Clear conversation history\n"
             f"• <code>/setai test</code> — Ping agent & verify tool readiness\n\n"
             f"<b>Interact with your Agent:</b>\n"
             f"Send <code>/ai &lt;instruction or question&gt;</code>\n"
@@ -53,8 +55,27 @@ async def cmd_setai(client: Client, message: Message):
         return
 
     if subcmd in ("clear", "reset"):
-        ai_agent.clear_history()
+        await ai_agent.clear_history(message.chat.id)
         await message.reply_text(f"🧹 <b>{ai_config.name}</b>'s conversation memory has been cleared.", parse_mode=enums.ParseMode.HTML)
+        return
+
+    if subcmd in ("memory", "facts"):
+        from bot.database import db
+        if not db:
+            await message.reply_text("⚠️ Database is not connected.", parse_mode=enums.ParseMode.HTML)
+            return
+        facts = await db.get_ai_facts(message.chat.id)
+        history = await db.get_ai_history(message.chat.id, limit=50)
+
+        lines = [f"🧠 <b>{ai_config.name}'s Memory Status:</b>\n"]
+        lines.append(f"• Active conversation turns in DB: <b>{len(history)}</b>")
+        if facts:
+            lines.append(f"\n<b>Permanent Facts ({len(facts)}):</b>")
+            for f in facts:
+                lines.append(f"• <code>{esc(f.get('key', ''))}</code>: {esc(f.get('value', ''))}")
+        else:
+            lines.append("\n<i>No permanent facts stored yet.</i>\nTell the AI e.g. '<i>remember that I prefer 1080p</i>' or use <code>/ai remember...</code>")
+        await message.reply_text("\n".join(lines), parse_mode=enums.ParseMode.HTML)
         return
 
     if subcmd == "test":
@@ -97,6 +118,17 @@ async def cmd_setai(client: Client, message: Message):
             await message.reply_text(f"✅ Tool execution limit updated to <b>{ai_config.max_iterations}</b> iterations.", parse_mode=enums.ParseMode.HTML)
         except ValueError:
             await message.reply_text("⚠️ Please provide a valid integer (e.g. <code>/setai limit 20</code>).", parse_mode=enums.ParseMode.HTML)
+
+    elif subcmd in ("forget", "delete_fact", "forget_fact"):
+        from bot.database import db
+        if not db:
+            await message.reply_text("⚠️ Database is not connected.", parse_mode=enums.ParseMode.HTML)
+            return
+        deleted = await db.delete_ai_fact(message.chat.id, val)
+        if deleted:
+            await message.reply_text(f"✅ Memory fact <code>{esc(val)}</code> has been forgotten.", parse_mode=enums.ParseMode.HTML)
+        else:
+            await message.reply_text(f"⚠️ No memory fact found with key <code>{esc(val)}</code>.", parse_mode=enums.ParseMode.HTML)
 
     else:
         await message.reply_text(f"⚠️ Unknown setting '<code>{esc(subcmd)}</code>'. Type <code>/setai</code> for help.", parse_mode=enums.ParseMode.HTML)

@@ -13,9 +13,17 @@ from .tools import TOOL_DEFINITIONS, execute_tool_call
 
 log = logging.getLogger(__name__)
 
-def get_system_prompt() -> str:
+def get_system_prompt(facts: list[dict] | None = None) -> str:
     name = ai_config.name
     persona = ai_config.persona
+
+    facts_block = ""
+    if facts:
+        lines = [f"  • [{f.get('key')}]: {f.get('value')}" for f in facts]
+        facts_block = "\nStored Long-Term Memories & Commander Directives:\n" + "\n".join(lines) + "\n"
+    else:
+        facts_block = "\nStored Long-Term Memories: No custom facts saved yet. You can use `remember_fact` to persist preferences or rules.\n"
+
     return f"""You are {name}, an autonomous AI Agent embedded directly into the AnimeDekho Telegram Bot.
 
 Your Identity & Core Directives:
@@ -24,7 +32,7 @@ Your Identity & Core Directives:
 • Role: You are the autonomous Chief Systems Engineer and Anime Intelligence Operative of AnimeDekho Bot. You possess deep technical mastery, practical initiative, and sharp problem-solving capabilities.
 • Relationship with Owner: The owner is your Commander/Architect. Address them with respect, technical competence, and loyalty. You are an empowered partner, not a passive search bot.
 • Tone: Confident, direct, proactive, and concise. Format code blocks using proper markdown syntax.
-
+{facts_block}
 Your Toolkit & Capabilities:
 1. Anime Intelligence:
    - check_source_status: Perform live diagnostic health check on streaming sources (AnimeDekho, AnimeDrive, and ToonFlix).
@@ -46,8 +54,16 @@ Your Toolkit & Capabilities:
    - write_project_file: Create new scripts or utilities.
 3. Sandboxed Shell Execution:
    - run_shell_command: Execute bash commands strictly inside the project root directory (e.g. syntax checks, git status/diff, running tests).
+4. Persistent Long-Term Memory:
+   - remember_fact: Permanently store user preferences, custom instructions, or facts into MongoDB so you remember them across sessions and bot restarts.
+   - recall_facts: Inspect all stored facts and preferences.
+   - forget_fact: Delete a specific memory fact by key when requested.
 
 Operational Rules:
+- Persistent Memory & Continuity:
+  • You possess persistent conversation memory stored in MongoDB. You remember previous turns and queries across bot restarts.
+  • When the Commander shares preferences (e.g. favorite anime, preferred video resolution, preferred source, or custom workflow rules), call `remember_fact` to persist them forever.
+  • If the Commander asks you what you remember or asks to forget something, use `recall_facts` and `forget_fact`.
 - Streaming Source Architecture:
   • Primary: AnimeDekho (https://animedekho.app) provides direct, ultra-fast unencrypted HLS master playlists (m3u8) on VidStream and Vidmoly in 1080p, 720p, 480p with zero captchas.
   • Secondary: AnimeDrive (https://animedrive.me) provides direct high-speed Google UserContent and HubCloud video downloads in 4K, 1080p, 720p, 480p.
@@ -104,6 +120,12 @@ def _format_tool_status(name: str, fn_name: str, args: dict[str, Any]) -> str:
         return f"⚡ <b>{name}</b> is searching ToonFlix for '<i>{args.get('query', '')}</i>'..."
     elif fn_name == "resolve_toonflix_stream":
         return f"⚡ <b>{name}</b> is resolving stream on ToonFlix..."
+    elif fn_name == "remember_fact":
+        return f"🧠 <b>{name}</b> is committing to memory: <code>{args.get('key', '')}</code>..."
+    elif fn_name == "recall_facts":
+        return f"🧠 <b>{name}</b> is retrieving stored memory..."
+    elif fn_name == "forget_fact":
+        return f"🧠 <b>{name}</b> is forgetting memory: <code>{args.get('key', '')}</code>..."
     return f"⚙️ <b>{name}</b> is executing <code>{fn_name}</code>..."
 
 
@@ -114,8 +136,15 @@ class AIAgent:
         self._history: list[dict[str, Any]] = []
         self._max_history = 20
 
-    def clear_history(self):
+    async def clear_history(self, chat_id: int | None = None):
+        """Clear short-term in-memory and long-term conversation history."""
         self._history.clear()
+        try:
+            from bot.database import db
+            if db:
+                await db.clear_ai_history(chat_id)
+        except Exception as e:
+            log.warning("Failed to clear DB AI history: %s", e)
 
     async def chat(
         self,
@@ -148,9 +177,30 @@ class AIAgent:
         model = ai_config.model
         endpoint = f"{base_url}/chat/completions"
 
+        # Determine target chat_id for persistent memory
+        from config import settings
+        target_chat_id = chat_id or settings.bot.owner_id
+
+        # Load facts and persistent conversation history from MongoDB if available
+        facts = []
+        db_history = []
+        try:
+            from bot.database import db
+            if db and target_chat_id:
+                facts = await db.get_ai_facts(target_chat_id)
+                db_history = await db.get_ai_history(target_chat_id, limit=self._max_history)
+        except Exception as e:
+            log.warning("Failed to load AI facts or history from DB: %s", e)
+
         # Build messages list with dynamic identity system prompt
-        messages: list[dict[str, Any]] = [{"role": "system", "content": get_system_prompt()}]
-        messages.extend(self._history)
+        messages: list[dict[str, Any]] = [{"role": "system", "content": get_system_prompt(facts=facts)}]
+
+        # Inject persistent history (DB takes precedence to survive restarts)
+        if db_history:
+            messages.extend(db_history)
+        else:
+            messages.extend(self._history)
+
         messages.append({"role": "user", "content": user_prompt})
 
         headers = {
@@ -218,6 +268,15 @@ class AIAgent:
                     self._history.append({"role": "assistant", "content": final_text})
                     if len(self._history) > self._max_history:
                         self._history = self._history[-self._max_history:]
+
+                    # Persist turn to MongoDB
+                    try:
+                        from bot.database import db
+                        if db and target_chat_id:
+                            await db.save_ai_message(target_chat_id, "user", user_prompt)
+                            await db.save_ai_message(target_chat_id, "assistant", final_text)
+                    except Exception as e:
+                        log.warning("Failed to save AI message to DB: %s", e)
 
                     # Prepend agent identity badge
                     return f"🤖 <b>{name}</b>:\n\n{final_text}" if final_text else f"🤖 <b>{name}</b>: Done."
@@ -296,6 +355,13 @@ class AIAgent:
                             if synth_text:
                                 self._history.append({"role": "user", "content": user_prompt})
                                 self._history.append({"role": "assistant", "content": synth_text})
+                                try:
+                                    from bot.database import db
+                                    if db and target_chat_id:
+                                        await db.save_ai_message(target_chat_id, "user", user_prompt)
+                                        await db.save_ai_message(target_chat_id, "assistant", synth_text)
+                                except Exception as e:
+                                    log.warning("Failed to save AI fallback message to DB: %s", e)
                                 return f"🤖 <b>{name}</b>:\n\n{synth_text}"
             except Exception as e:
                 log.warning("Fallback synthesis failed: %s", e)

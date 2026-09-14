@@ -413,6 +413,55 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember_fact",
+            "description": "Store an important fact, preference, user directive, or instruction permanently in long-term memory so it is remembered across sessions and bot restarts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Short identifier/category for the memory (e.g. 'preferred_quality', 'favorite_anime', 'source_preference', 'custom_rule').",
+                    },
+                    "fact": {
+                        "type": "string",
+                        "description": "The detailed fact, preference, or directive to remember permanently.",
+                    },
+                },
+                "required": ["key", "fact"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_facts",
+            "description": "Retrieve all stored long-term memory facts, user preferences, and directives.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "forget_fact",
+            "description": "Remove or forget a specific permanent memory fact or preference by key.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "The identifier of the fact to remove.",
+                    },
+                },
+                "required": ["key"],
+            },
+        },
+    },
 ]
 
 
@@ -1189,6 +1238,56 @@ async def tool_resolve_toonflix_stream(anime_title: str, season: int = 1, episod
         return f"ToonFlix resolution error: {e}"
 
 
+async def tool_remember_fact(key: str, fact: str) -> str:
+    """Store an important fact or preference permanently in MongoDB."""
+    from bot.database import db
+    from config import settings
+    _, chat_id = get_active_context()
+    target_id = chat_id or settings.bot.owner_id
+    if not db:
+        return "Database not initialized. Cannot save permanent memory."
+    try:
+        await db.save_ai_fact(target_id, key, fact)
+        return f"Successfully saved to long-term memory: [{key}] -> '{fact}'"
+    except Exception as e:
+        return f"Failed to save fact: {e}"
+
+
+async def tool_recall_facts() -> str:
+    """Retrieve all stored permanent memory facts for current chat."""
+    from bot.database import db
+    from config import settings
+    _, chat_id = get_active_context()
+    target_id = chat_id or settings.bot.owner_id
+    if not db:
+        return "Database not initialized."
+    try:
+        facts = await db.get_ai_facts(target_id)
+        if not facts:
+            return "No permanent memory facts stored yet."
+        formatted = "\n".join([f"• [{f.get('key')}]: {f.get('value')}" for f in facts])
+        return f"Stored Permanent Memories ({len(facts)}):\n{formatted}"
+    except Exception as e:
+        return f"Failed to recall facts: {e}"
+
+
+async def tool_forget_fact(key: str) -> str:
+    """Delete a stored memory fact by key."""
+    from bot.database import db
+    from config import settings
+    _, chat_id = get_active_context()
+    target_id = chat_id or settings.bot.owner_id
+    if not db:
+        return "Database not initialized."
+    try:
+        deleted = await db.delete_ai_fact(target_id, key)
+        if deleted:
+            return f"Successfully forgot and removed memory: [{key}]."
+        return f"No memory fact found with key: '{key}'."
+    except Exception as e:
+        return f"Failed to delete fact: {e}"
+
+
 # ── Tool Dispatcher ───────────────────────────────────────────────────
 
 TOOL_MAP = {
@@ -1209,6 +1308,9 @@ TOOL_MAP = {
     "download_and_send_anime": tool_download_and_send_anime,
     "search_toonflix": tool_search_toonflix,
     "resolve_toonflix_stream": tool_resolve_toonflix_stream,
+    "remember_fact": tool_remember_fact,
+    "recall_facts": tool_recall_facts,
+    "forget_fact": tool_forget_fact,
 }
 
 
