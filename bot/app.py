@@ -8,9 +8,14 @@ from config.settings import settings
 
 log = logging.getLogger(__name__)
 
+active_bot_client: Client | None = None
+
 
 async def _on_start(client: Client):
     """Called after client starts — init HTTP client, DB & logger."""
+    global active_bot_client
+    active_bot_client = client
+
     from utils.http import http_client
     await http_client.start()
     log.info("HTTP client started")

@@ -204,8 +204,100 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "search_toonworld4all",
+            "description": "Search ToonWorld4All (https://toonworld4all.me) catalog for anime series or movies.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Anime or movie title to search on ToonWorld4All.",
+                    }
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_toonworld4all_episodes",
+            "description": "Extract available seasons and episodes from a ToonWorld4All series page.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page_url": {
+                        "type": "string",
+                        "description": "Full URL to a series page on ToonWorld4All.",
+                    }
+                },
+                "required": ["page_url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "resolve_toonworld4all_stream",
+            "description": "Resolve episode or movie stream from ToonWorld4All with AI-powered fallback (supports 4K, 1080p, 720p, 480p).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "anime_title": {
+                        "type": "string",
+                        "description": "Anime title.",
+                    },
+                    "season": {
+                        "type": "integer",
+                        "description": "Season number (default 1).",
+                        "default": 1,
+                    },
+                    "episode": {
+                        "type": "integer",
+                        "description": "Episode number (default 1).",
+                        "default": 1,
+                    },
+                    "quality_pref": {
+                        "type": "string",
+                        "description": "Target resolution: '4K', '1080p', '720p', '480p'.",
+                        "default": "1080p",
+                    },
+                },
+                "required": ["anime_title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "download_and_send_anime",
+            "description": "Download an anime video from any resolved stream/file URL and send it directly to the Telegram chat.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "stream_url": {
+                        "type": "string",
+                        "description": "Direct media/stream URL to download.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Title and episode label (e.g. 'Solo Leveling S01E01').",
+                    },
+                    "quality": {
+                        "type": "string",
+                        "description": "Quality resolution (e.g. '1080p', '720p', '4K').",
+                        "default": "1080p",
+                    },
+                },
+                "required": ["stream_url", "title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_toonflix",
-            "description": "Search ToonFlix.in (fallback source with 4K / high quality anime).",
+            "description": "Search ToonFlix.in (legacy fallback).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -222,7 +314,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "resolve_toonflix_stream",
-            "description": "Resolve episode or movie stream from ToonFlix.in, supporting 4K, 1080p, 720p.",
+            "description": "Resolve episode or movie stream from ToonFlix.in.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -431,6 +523,69 @@ async def tool_run_shell_command(command: str) -> str:
         return f"Error executing shell command: {e}"
 
 
+async def tool_search_toonworld4all(query: str) -> str:
+    try:
+        from extractors.toonworld4all import toonworld4all
+        results = await toonworld4all.search(query)
+        return json.dumps(results[:10], indent=2) if results else f"No results on ToonWorld4All for '{query}'"
+    except Exception as e:
+        return f"ToonWorld4All search error: {e}"
+
+
+async def tool_get_toonworld4all_episodes(page_url: str) -> str:
+    try:
+        from extractors.toonworld4all import toonworld4all
+        eps = await toonworld4all.get_series_episodes(page_url)
+        return json.dumps(eps, indent=2) if eps else f"No episodes found on {page_url}"
+    except Exception as e:
+        return f"Error extracting episodes from {page_url}: {e}"
+
+
+async def tool_resolve_toonworld4all_stream(anime_title: str, season: int = 1, episode: int = 1, quality_pref: str = "1080p") -> str:
+    try:
+        from extractors.toonworld4all import toonworld4all
+        res = await toonworld4all.resolve_episode(anime_title, season=season, episode=episode, quality_pref=quality_pref)
+        return json.dumps(res, indent=2) if res else f"Could not resolve stream for '{anime_title}' S{season}E{episode} [{quality_pref}] on ToonWorld4All."
+    except Exception as e:
+        return f"ToonWorld4All resolution error: {e}"
+
+
+async def tool_download_and_send_anime(stream_url: str, title: str, quality: str = "1080p") -> str:
+    try:
+        from pyrogram import enums
+        from bot.app import active_bot_client
+        from config.settings import settings
+        from bot.downloader import download_and_upload
+
+        if not active_bot_client:
+            return "Error: Telegram bot client is not running or initialized."
+
+        owner_id = int(settings.bot.owner_id)
+        status_msg = await active_bot_client.send_message(
+            chat_id=owner_id,
+            text=f"🤖 <b>Kage</b>: Initiating autonomous download for <b>{title}</b> [{quality}]...",
+            parse_mode=enums.ParseMode.HTML,
+        )
+
+        clean_filename = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', title)}_{quality}.mp4"
+        success, sent_msg = await download_and_upload(
+            chat_id=owner_id,
+            stream_url=stream_url,
+            quality=quality,
+            filename=clean_filename,
+            title=title,
+            progress_msg=status_msg,
+            client=active_bot_client,
+        )
+
+        if success and sent_msg:
+            return f"Success: Downloaded and uploaded '{title}' [{quality}] directly to Telegram chat {owner_id}."
+        return f"Download or upload failed for '{title}'. Check server logs for details."
+    except Exception as e:
+        log.exception("tool_download_and_send_anime failed")
+        return f"Error downloading and sending anime: {e}"
+
+
 async def tool_search_toonflix(query: str) -> str:
     try:
         from extractors.toonflix import toonflix
@@ -461,6 +616,10 @@ TOOL_MAP = {
     "edit_project_file": tool_edit_project_file,
     "write_project_file": tool_write_project_file,
     "run_shell_command": tool_run_shell_command,
+    "search_toonworld4all": tool_search_toonworld4all,
+    "get_toonworld4all_episodes": tool_get_toonworld4all_episodes,
+    "resolve_toonworld4all_stream": tool_resolve_toonworld4all_stream,
+    "download_and_send_anime": tool_download_and_send_anime,
     "search_toonflix": tool_search_toonflix,
     "resolve_toonflix_stream": tool_resolve_toonflix_stream,
 }

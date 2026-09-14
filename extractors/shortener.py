@@ -33,6 +33,7 @@ _SHORTENER_DOMAINS: dict[str, str] = {
     "gplinks.com": "gplinks",
     "vshort.in": "vshort",
     "vshort.me": "vshort",
+    "vshort.xyz": "vshort",
     "vshortener.com": "vshort",
     "cuty.io": "cuty",
     "cutt.ly": "cuty",
@@ -245,6 +246,18 @@ async def _bypass_vshort(url: str, http_client) -> str | None:
     """
     parsed = urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
+
+    # Strategy 0: Direct embedded url in query string (e.g. vshort.xyz/full?api=...&url=aHR0cHM...)
+    qs = parse_qs(parsed.query)
+    if "url" in qs:
+        try:
+            raw_url = qs["url"][0]
+            dec = unquote(base64.b64decode(unquote(raw_url)).decode('utf-8'))
+            if dec.startswith("http"):
+                log.info("vshort query parameter directly decoded to: %s", dec[:60])
+                return dec
+        except Exception:
+            pass
 
     html = await http_client.get_text_no_cache(url, headers={
         "Referer": base + "/",

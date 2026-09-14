@@ -41,7 +41,14 @@ DEFAULT_HEADERS = {
 }
 
 # Domains that need cloudscraper (Cloudflare-protected)
-_CLOUDFLARE_DOMAINS = ("animedekho.app", "toonflix.in", "drive.toonflix.in", "files.toonflix.in")
+_CLOUDFLARE_DOMAINS = (
+    "animedekho.app",
+    "toonflix.in",
+    "drive.toonflix.in",
+    "files.toonflix.in",
+    "toonworld4all.me",
+    "archive.toonworld4all.me",
+)
 
 
 # ── Cache entry ────────────────────────────────────────────────────────

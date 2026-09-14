@@ -180,6 +180,10 @@ def _get_origin(url: str) -> str:
         return "https://mirror.xerver.xyz"
     elif "toonflix" in domain or "workers.dev" in domain:
         return "https://drive.toonflix.in"
+    elif "toonworld4all" in domain or "tw4all" in domain:
+        return "https://toonworld4all.me"
+    elif "hubcloud" in domain:
+        return "https://hubcloud.ist"
     return f"https://{domain}"
 
 

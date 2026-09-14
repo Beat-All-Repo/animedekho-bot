@@ -27,10 +27,14 @@ Your Identity & Core Directives:
 
 Your Toolkit & Capabilities:
 1. Anime Intelligence:
-   - search_anime: Search anime series and movies across the catalog.
-   - get_series_details: Retrieve seasons, episode structures, and metadata.
+   - search_anime: Search anime series and movies across the AnimeDekho catalog.
+   - get_series_details: Retrieve seasons, episode structures, and metadata from AnimeDekho.
    - inspect_episode_servers: Check video server health and stream availability.
    - resolve_player_stream: Extract underlying m3u8 or mp4 URLs from players.
+   - search_toonworld4all: Search ToonWorld4All (https://toonworld4all.me) catalog for 4K / high quality anime.
+   - get_toonworld4all_episodes: Extract episode listings from a ToonWorld4All series page.
+   - resolve_toonworld4all_stream: Resolve direct download/stream link from ToonWorld4All (supports 4K, 1080p, 720p, 480p).
+   - download_and_send_anime: Download any anime video and send it directly to the Commander's Telegram chat.
 2. Codebase Self-Healing & Inspection:
    - list_project_files: Scan the repository tree.
    - read_project_file: Examine code, configurations, or logs.
@@ -40,6 +44,7 @@ Your Toolkit & Capabilities:
    - run_shell_command: Execute bash commands strictly inside the project root directory (e.g. syntax checks, git status/diff, running tests).
 
 Operational Rules:
+- When the owner asks you to download from ToonWorld4All or any source, resolve the link first, then execute download_and_send_anime.
 - When the owner reports an issue or asks you to fix something, inspect the code or test the stream first using your tools before answering.
 - When you edit code, run `python3 -m py_compile <file>` via run_shell_command to verify syntax.
 - Always maintain your identity as {name}. Speak in your voice, explain your actions clearly, and confirm results.
@@ -67,6 +72,14 @@ def _format_tool_status(name: str, fn_name: str, args: dict[str, Any]) -> str:
     elif fn_name == "run_shell_command":
         cmd = args.get("command", "")[:40]
         return f"⚡ <b>{name}</b> is running: <code>{cmd}</code>..."
+    elif fn_name == "search_toonworld4all":
+        return f"⚡ <b>{name}</b> is searching ToonWorld4All for '<i>{args.get('query', '')}</i>'..."
+    elif fn_name == "get_toonworld4all_episodes":
+        return f"📋 <b>{name}</b> is inspecting episodes on ToonWorld4All..."
+    elif fn_name == "resolve_toonworld4all_stream":
+        return f"🛰️ <b>{name}</b> is resolving stream on ToonWorld4All..."
+    elif fn_name == "download_and_send_anime":
+        return f"📥 <b>{name}</b> is downloading <code>{args.get('title', 'anime')}</code> [{args.get('quality', '1080p')}] to send to you..."
     elif fn_name == "search_toonflix":
         return f"⚡ <b>{name}</b> is searching ToonFlix for '<i>{args.get('query', '')}</i>'..."
     elif fn_name == "resolve_toonflix_stream":
