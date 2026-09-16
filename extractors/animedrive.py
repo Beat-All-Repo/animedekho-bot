@@ -34,9 +34,9 @@ def is_playable_media_url(url: str) -> bool:
     if any(bad in u for bad in unplayable_domains):
         return False
     # Known video stream / direct file patterns
-    if any(ext in u for ext in (".m3u8", ".mpd", ".mp4", ".mkv", ".webm", ".ts")):
+    if any(ext in u for ext in (".m3u8", ".mpd", ".mp4", ".mkv", ".webm", ".ts", ".zip")):
         return True
-    if any(dom in u for dom in ("googleusercontent.com", "drive.google.com", "mega.nz", "workers.dev")):
+    if any(dom in u for dom in ("googleusercontent.com", "drive.google.com", "mega.nz", "workers.dev", "storage.googleapis.com", "cloudflarestorage.com")):
         return True
     return False
 
@@ -272,7 +272,12 @@ class AnimeDriveExtractor:
             href = b["href"]
             if "/dl/" not in href:
                 continue
-            b_txt = b.get_text(" ", strip=True).lower()
+
+            # Check both button text and its parent block text (e.g. "1080p Quality(3.53 GB) || Hub Cloud")
+            parent = b.find_parent(["p", "div", "li", "tr", "h4", "h3", "h2"])
+            parent_txt = parent.get_text(" ", strip=True).lower() if parent else ""
+            b_txt = (parent_txt + " " + b.get_text(" ", strip=True).lower()).strip()
+
             dest = _decode_animedrive_dl(href)
             if not dest:
                 continue
@@ -287,6 +292,8 @@ class AnimeDriveExtractor:
                 quality_matched = quality_pref
             elif "1080" in b_txt:
                 quality_matched = "1080p"
+                if is_4k:
+                    matches_quality = True
             elif "720" in b_txt:
                 quality_matched = "720p"
             elif "480" in b_txt:
@@ -332,7 +339,7 @@ class AnimeDriveExtractor:
         return None
 
     def _resolve_hubcloud(self, s: cloudscraper.CloudScraper, hubcloud_url: str) -> str | None:
-        """Resolve a HubCloud link to direct Google UserContent or fast stream URL."""
+        """Resolve a HubCloud link to direct Google Cloud Storage (ZipDisk), R2, or fast stream URL."""
         try:
             r = s.get(hubcloud_url, timeout=15)
             if r.status_code != 200:
@@ -350,45 +357,54 @@ class AnimeDriveExtractor:
                 log.debug("AnimeDrive: No hubcloud.php found on %s", hubcloud_url)
                 return None
 
-            r2 = s.get(gen_url, timeout=15)
+            r2 = s.get(gen_url, headers={"Referer": hubcloud_url}, timeout=15)
             if r2.status_code != 200:
                 return None
             soup2 = BeautifulSoup(r2.text, "html.parser")
 
-            cand = None
+            candidates = []
             for a in soup2.find_all("a", href=True):
                 h = a["href"]
-                if "pixel.hubcloud.ist" in h or "workers.dev" in h:
-                    cand = h
-                    break
+                if not h.startswith("http"):
+                    continue
+                # Prioritize ZipDisk (storage.googleapis.com) which has verified HTTP 200 OK delivery
+                if "storage.googleapis.com" in h:
+                    candidates.insert(0, h)
+                elif "cloudflarestorage.com" in h:
+                    candidates.append(h)
+                elif "pixeldrain.dev/u/" in h:
+                    candidates.append(h.replace("/u/", "/api/file/"))
+                elif any(x in h for x in ("googleusercontent.com", "workers.dev", "dl.php")):
+                    candidates.append(h)
 
-            if not cand:
-                # Check other download links
-                for a in soup2.find_all("a", href=True):
-                    h = a["href"]
-                    if any(x in h for x in ["dl.php", "pixeldrain", "googleusercontent.com"]):
-                        cand = h
+            # Test candidates to find verified live working download
+            for cand in candidates:
+                try:
+                    head = s.head(cand, allow_redirects=True, timeout=8)
+                    if head.status_code in (200, 206):
+                        ctype = head.headers.get("Content-Type", "").lower()
+                        if not any(bad in ctype for bad in ("text/html", "application/json")):
+                            log.info("AnimeDrive: Verified working HubCloud stream: %s", cand[:80])
+                            return cand
+                except Exception:
+                    pass
+
+                curr = cand
+                for _ in range(5):
+                    try:
+                        r_step = s.get(curr, allow_redirects=False, timeout=8)
+                        loc = r_step.headers.get("Location")
+                        if not loc:
+                            break
+                        if "link=" in loc:
+                            direct = urllib.parse.unquote(loc.split("link=")[1].split("&")[0])
+                            if is_playable_media_url(direct):
+                                return direct
+                        curr = loc
+                        if is_playable_media_url(curr):
+                            return curr
+                    except Exception:
                         break
-
-            if not cand:
-                return None
-
-            curr = cand
-            for _ in range(6):
-                r_step = s.get(curr, allow_redirects=False, timeout=15)
-                loc = r_step.headers.get("Location")
-                if not loc:
-                    break
-                if "link=" in loc:
-                    direct = urllib.parse.unquote(loc.split("link=")[1].split("&")[0])
-                    if is_playable_media_url(direct):
-                        return direct
-                curr = loc
-                if any(ext in curr.lower() for ext in (".m3u8", ".mpd", ".mp4", ".mkv", ".webm")) or "googleusercontent.com" in curr:
-                    return curr
-
-            if is_playable_media_url(curr):
-                return curr
 
             return None
         except Exception as e:

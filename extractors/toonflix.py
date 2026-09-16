@@ -185,6 +185,8 @@ class ToonflixExtractor:
             m = re.search(r"handleLinkClick\('([^']+)',\s*'download'\)", r_drive.text)
             if m:
                 chosen_rel_go = m.group(1)
+                if is_4k_request:
+                    matched_quality = "1080p"
 
         if chosen_rel_go:
             chosen_rel_go = html_mod.unescape(chosen_rel_go)

@@ -1041,6 +1041,7 @@ async def tool_download_anime_episode(
         clean_slug = re.sub(r'[^a-zA-Z0-9_-]', '_', anime_title)
         filename = f"{clean_slug}_S{season:02d}E{episode:02d}_{quality_pref}.mp4"
 
+        ref = "https://hubcloud.ist/" if "AnimeDrive" in (source_used or "") else ("https://drive.toonflix.in/" if "ToonFlix" in (source_used or "") else "")
         success, sent_msg = await download_and_upload(
             chat_id=chat_id,
             stream_url=stream_url,
@@ -1050,6 +1051,7 @@ async def tool_download_anime_episode(
             progress_msg=status_msg,
             client=client,
             variant_url=variant_url,
+            referer=ref,
             poster_url=poster_url,
         )
 

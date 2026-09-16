@@ -141,9 +141,10 @@ class BotLogger:
         )
 
     async def log_batch_complete(self, series: str, season: int, completed: int, total: int):
+        status_icon = "✅" if completed == total else ("⚠️" if completed > 0 else "❌")
         await self._send_log(
             f"📦 <b>Batch complete:</b> {_esc(series)} S{season}\n"
-            f"✅ {completed}/{total} episodes uploaded"
+            f"{status_icon} {completed}/{total} episodes uploaded"
         )
 
 

@@ -691,36 +691,75 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                 log.warning("No servers for batch ep %s", ep.slug)
                 continue
 
-            candidates = _find_quality_candidates(resolved, quality_pref)
-            if not candidates:
-                log.warning("No quality match for batch ep %s", ep.slug)
-                continue
+            candidates = _find_quality_candidates(resolved or [], quality_pref)
+            if not candidates and quality_pref.lower() in ("4k", "2160p", "2160"):
+                # AnimeDekho lacks 4K — fallback to 1080p
+                candidates = _find_quality_candidates(resolved or [], "1080p")
+                if not candidates:
+                    candidates = _find_quality_candidates(resolved or [], "720p")
 
-            primary_srv, primary_q = candidates[0]
-            filename = make_episode_filename(series.title, season, ep.number, primary_q.resolution)
+            success = False
+            sent_msg = None
+            chosen_q = candidates[0][1] if candidates else Quality(resolution=quality_pref, url="")
+            filename = make_episode_filename(series.title, season, ep.number, chosen_q.resolution)
 
             # Create a per-episode progress message
             ep_msg = await client.send_message(
                 chat_id,
-                f"📥 <b>Downloading:</b> S{season}E{ep.number} [{primary_q.resolution}]",
+                f"📥 <b>Downloading:</b> S{season}E{ep.number} [{chosen_q.resolution}]",
                 parse_mode=enums.ParseMode.HTML,
             )
             sent_messages.append(ep_msg)
 
-            success = False
-            sent_msg = None
-            chosen_q = primary_q
+            if candidates:
+                for attempt, (srv, quality) in enumerate(candidates, 1):
+                    chosen_q = quality
+                    success, sent_msg = await download_and_upload(
+                        chat_id, quality.master_url or quality.url, quality.resolution, filename,
+                        f"{series.title} S{season}E{ep.number}",
+                        ep_msg, client, variant_url=quality.url,
+                        poster_url=series.poster or "",
+                    )
+                    if success:
+                        break
 
-            for attempt, (srv, quality) in enumerate(candidates, 1):
-                chosen_q = quality
-                success, sent_msg = await download_and_upload(
-                    chat_id, quality.master_url or quality.url, quality.resolution, filename,
-                    f"{series.title} S{season}E{ep.number}",
-                    ep_msg, client, variant_url=quality.url,
-                    poster_url=series.poster or "",
-                )
-                if success:
-                    break
+            # Fallback 1: Secondary - AnimeDrive
+            if not success:
+                try:
+                    from extractors.animedrive import animedrive
+                    ad_res = await animedrive.resolve_episode(series.title, season=season, episode=ep.number, quality_pref=quality_pref)
+                    if ad_res and ad_res.get("url"):
+                        success, sent_msg = await download_and_upload(
+                            chat_id, ad_res["url"], ad_res["quality"],
+                            make_episode_filename(series.title, season, ep.number, ad_res["quality"]),
+                            f"{series.title} S{season}E{ep.number}",
+                            ep_msg, client,
+                            referer=ad_res.get("referer", "https://hubcloud.ist/"),
+                            poster_url=series.poster or ad_res.get("poster", ""),
+                        )
+                        if success:
+                            chosen_q = Quality(resolution=ad_res["quality"], url=ad_res["url"])
+                except Exception as e:
+                    log.warning("Batch AnimeDrive fallback failed for ep %s: %s", ep.slug, e)
+
+            # Fallback 2: Tertiary - ToonFlix
+            if not success:
+                try:
+                    from extractors.toonflix import toonflix
+                    tf_res = await toonflix.resolve_episode(series.title, season=season, episode=ep.number, quality_pref=quality_pref)
+                    if tf_res and tf_res.get("url"):
+                        success, sent_msg = await download_and_upload(
+                            chat_id, tf_res["url"], tf_res["quality"],
+                            make_episode_filename(series.title, season, ep.number, tf_res["quality"]),
+                            f"{series.title} S{season}E{ep.number}",
+                            ep_msg, client,
+                            referer=tf_res.get("referer", "https://drive.toonflix.in/"),
+                            poster_url=series.poster or tf_res.get("poster", ""),
+                        )
+                        if success:
+                            chosen_q = Quality(resolution=tf_res["quality"], url=tf_res["url"])
+                except Exception as e:
+                    log.warning("Batch ToonFlix fallback failed for ep %s: %s", ep.slug, e)
 
             if success:
                 completed += 1
@@ -839,15 +878,17 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
                     pass
 
             log.info("Downloading %s via %s [%s]", title, srv.name, quality.resolution)
+            ref = "https://hubcloud.ist/" if "AnimeDrive" in srv.name else ("https://drive.toonflix.in/" if "ToonFlix" in srv.name else "")
             success, sent_msg = await download_and_upload(
                 chat_id, quality.master_url or quality.url, quality.resolution, filename, title, progress_msg, client,
                 variant_url=quality.url,
+                referer=ref,
                 poster_url=poster_url or "",
             )
             if success:
                 break
 
-        if not success and not any(s.name in ("AnimeDrive", "ToonFlix") for s, _ in candidates):
+        if not success:
             # Fallback cascade: Secondary (AnimeDrive) -> Tertiary (ToonFlix)
             import re
             s_num, ep_num = 1, 1
@@ -859,32 +900,33 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
 
             lookup_title = slug_to_title(series_slug) if series_slug else title
 
-            # Step 1: Secondary fallback to AnimeDrive (animedrive.me)
-            try:
-                from extractors.animedrive import animedrive
-                await progress_msg.edit_text(
-                    f"🔄 <b>AnimeDekho servers failed, trying AnimeDrive fallback...</b>\n{esc(title)} [{chosen_quality.resolution}]",
-                    parse_mode=enums.ParseMode.HTML,
-                )
-                ad_res = await animedrive.resolve_episode(lookup_title, season=s_num, episode=ep_num, quality_pref=chosen_quality.resolution)
-                if ad_res and ad_res.get("url"):
-                    if ad_res.get("poster") and not poster_url:
-                        poster_url = ad_res["poster"]
-                        if series_slug:
-                            _poster_cache[series_slug] = poster_url
-                    success, sent_msg = await download_and_upload(
-                        chat_id, ad_res["url"], ad_res["quality"], filename, title, progress_msg, client,
-                        referer=ad_res.get("referer", "https://hubcloud.ist/"),
-                        poster_url=poster_url or "",
+            # Step 1: Secondary fallback to AnimeDrive (if not already tried)
+            if not any("AnimeDrive" in s.name for s, _ in candidates):
+                try:
+                    from extractors.animedrive import animedrive
+                    await progress_msg.edit_text(
+                        f"🔄 <b>AnimeDekho servers failed, trying AnimeDrive fallback...</b>\n{esc(title)} [{chosen_quality.resolution}]",
+                        parse_mode=enums.ParseMode.HTML,
                     )
-                    if success:
-                        from api.models import Quality
-                        chosen_quality = Quality(resolution=ad_res["quality"], url=ad_res["url"])
-            except Exception as e:
-                log.warning("AnimeDrive fallback in _do_download failed: %s", e)
+                    ad_res = await animedrive.resolve_episode(lookup_title, season=s_num, episode=ep_num, quality_pref=chosen_quality.resolution)
+                    if ad_res and ad_res.get("url"):
+                        if ad_res.get("poster") and not poster_url:
+                            poster_url = ad_res["poster"]
+                            if series_slug:
+                                _poster_cache[series_slug] = poster_url
+                        success, sent_msg = await download_and_upload(
+                            chat_id, ad_res["url"], ad_res["quality"], filename, title, progress_msg, client,
+                            referer=ad_res.get("referer", "https://hubcloud.ist/"),
+                            poster_url=poster_url or "",
+                        )
+                        if success:
+                            from api.models import Quality
+                            chosen_quality = Quality(resolution=ad_res["quality"], url=ad_res["url"])
+                except Exception as e:
+                    log.warning("AnimeDrive fallback in _do_download failed: %s", e)
 
-            # Step 2: Tertiary fallback to ToonFlix (toonflix.in) if AnimeDrive also failed
-            if not success:
+            # Step 2: Tertiary fallback to ToonFlix (if not already tried)
+            if not success and not any("ToonFlix" in s.name for s, _ in candidates):
                 try:
                     from extractors.toonflix import toonflix
                     await progress_msg.edit_text(
