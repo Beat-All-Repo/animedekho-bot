@@ -1134,6 +1134,15 @@ async def tool_download_anime_episode(
         slug_base = re.sub(r'[^a-zA-Z0-9]+', '-', anime_title).strip('-').lower()
         series_slug = f"{slug_base}-season-{season:02d}" if season > 1 else slug_base
 
+        # Resolve authoritative AniList poster
+        try:
+            from utils.anilist import resolve_best_poster
+            resolved_p = await resolve_best_poster(anime_title, poster_url)
+            if resolved_p:
+                poster_url = resolved_p
+        except Exception:
+            pass
+
         dest_chan_id = None
         from bot.database import db
         if db:

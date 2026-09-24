@@ -11,6 +11,7 @@ from .models import (
     VideoServer, Category, PaginatedResult,
 )
 from utils.helpers import clean_title, slug_to_title
+from utils.anilist import is_valid_poster_url
 
 
 # ── Regex patterns ────────────────────────────────────────────────
@@ -58,7 +59,9 @@ def parse_search_html(html: str) -> list[SearchResult]:
             poster = ""
             img = article.find("img")
             if img:
-                poster = img.get("data-src") or img.get("src") or ""
+                p_url = img.get("data-src") or img.get("src") or ""
+                if is_valid_poster_url(p_url):
+                    poster = p_url
             results.append(SearchResult(
                 title=title, slug=slug, url=href,
                 content_type="series", poster=poster,
@@ -71,7 +74,9 @@ def parse_search_html(html: str) -> list[SearchResult]:
             poster = ""
             img = article.find("img")
             if img:
-                poster = img.get("data-src") or img.get("src") or ""
+                p_url = img.get("data-src") or img.get("src") or ""
+                if is_valid_poster_url(p_url):
+                    poster = p_url
             results.append(SearchResult(
                 title=title, slug=slug, url=href,
                 content_type="movie", poster=poster,
@@ -100,7 +105,9 @@ def parse_listing_page(html: str, url_re: re.Pattern, content_type: str) -> Pagi
         poster = ""
         img = a.find("img")
         if img:
-            poster = img.get("data-src") or img.get("src") or ""
+            p_url = img.get("data-src") or img.get("src") or ""
+            if is_valid_poster_url(p_url):
+                poster = p_url
 
         items.append(SearchResult(
             title=title, slug=slug, url=a["href"],
@@ -125,7 +132,9 @@ def parse_series_detail(html: str, slug: str) -> Series:
     poster = None
     og = soup.find("meta", property="og:image")
     if og:
-        poster = og.get("content")
+        og_url = og.get("content")
+        if is_valid_poster_url(og_url):
+            poster = og_url
 
     # Description
     desc = ""
@@ -233,7 +242,9 @@ def parse_movie_page(html: str, slug: str) -> Movie:
     poster = None
     og = soup.find("meta", property="og:image")
     if og:
-        poster = og.get("content")
+        og_url = og.get("content")
+        if is_valid_poster_url(og_url):
+            poster = og_url
 
     desc = ""
     meta = soup.find("meta", attrs={"name": "description"})

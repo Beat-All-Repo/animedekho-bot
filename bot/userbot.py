@@ -396,6 +396,13 @@ class UserbotManager:
         channel_id = chat.id
         log.info("Channel created with ID: %d", channel_id)
 
+        # Resolve authoritative AniList poster
+        try:
+            from utils.anilist import resolve_best_poster
+            poster_url = await resolve_best_poster(series_title, poster_url)
+        except Exception as e:
+            log.debug("Failed resolving best poster for channel: %s", e)
+
         # Set channel photo if poster_url provided
         if poster_url:
             poster_path = None

@@ -35,6 +35,13 @@ Built with **WZGram (High-Performance MTProto Fork with WarpCrypto)** for **2GB 
   3. Tertiary: **ToonFlix** (tertiary fallback)
 - **4K Tier Scoring** — Automatically identifies and downloads the highest available quality above 1080p (e.g. 1080p HQ x265, 1080p 10-bit, 2160p).
 
+### 🎨 AniList Official HD Poster & Key Visuals
+- **Authoritative AniList Integration** — Queries the **AniList GraphQL API** to retrieve official, high-resolution anime key visuals and cover art (`coverImage.extraLarge`).
+- **Smart Title Normalization** — Automatically cleans dub tags (e.g. `(Hindi Dubbed)`, `[Multi Audio]`, `Dual Audio`), quality labels (`1080p`, `720p`), and season tags into progressive query candidates.
+- **Junk & Banner Filtering** — Automatically detects and filters out generic website banners (e.g. `banner-112.webp`), header logos, and placeholders.
+- **Graceful Fallback** — If AniList has no match or is unreachable, seamlessly falls back to valid scraped artwork without blocking downloads.
+- **Channel Avatars & Album Cards** — The official AniList visual is automatically applied to dedicated per-anime channels, main channel album cards, and video upload thumbnails.
+
 ### 👷 Child Worker Bot Network (Load Balancing)
 - **Multi-Bot Worker Fleet** — Connect unlimited child worker bots (`/addbot`) to distribute user downloads and avoid single-bot Telegram rate limits.
 - **Quality-Tier Assignment** — Assign dedicated child bots to specific resolutions (e.g., Worker 1 for `1080p`, Worker 2 for `720p`, Worker 3 for `480p`).

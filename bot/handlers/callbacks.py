@@ -320,8 +320,11 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
                     is_resolved=True,
                     qualities=[Quality(resolution=ad_res["quality"], url=ad_res["url"])],
                 )
-                if ad_res.get("poster") and series_slug and not _poster_cache.get(series_slug):
-                    _poster_cache[series_slug] = ad_res["poster"]
+                if series_slug and not _poster_cache.get(series_slug):
+                    from utils.anilist import resolve_best_poster
+                    res_p = await resolve_best_poster(series_title, ad_res.get("poster"))
+                    if res_p:
+                        _poster_cache[series_slug] = res_p
                 if is_4k and _is_4k_satisfying(ad_q):
                     # Exact 4K or enhanced 1080p HQ tier found on AnimeDrive! AnimeDrive is default for 4K
                     candidates.insert(0, (ad_srv, ad_srv.qualities[0]))
@@ -345,8 +348,11 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
                 log.info("Checking ToonFlix fallback for '%s' S%dE%d [%s]", series_title, season, ep_num, quality_pref)
                 tf_res = await toonflix.resolve_episode(series_title, season=season, episode=ep_num, quality_pref=quality_pref)
                 if tf_res and tf_res.get("url"):
-                    if tf_res.get("poster") and series_slug and not _poster_cache.get(series_slug):
-                        _poster_cache[series_slug] = tf_res["poster"]
+                    if series_slug and not _poster_cache.get(series_slug):
+                        from utils.anilist import resolve_best_poster
+                        res_p = await resolve_best_poster(series_title, tf_res.get("poster"))
+                        if res_p:
+                            _poster_cache[series_slug] = res_p
                     tf_q = tf_res.get("quality", "").lower()
                     tf_srv = VideoServer(
                         name="ToonFlix",
@@ -502,9 +508,12 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
             log.info("Checking AnimeDrive for movie '%s' [%s]", title, quality_pref)
             ad_res = await animedrive.resolve_episode(title, season=1, episode=1, quality_pref=quality_pref)
             if ad_res and ad_res.get("url"):
-                if ad_res.get("poster") and not poster_url:
-                    poster_url = ad_res["poster"]
-                    _poster_cache[movie_slug] = poster_url
+                if not poster_url:
+                    from utils.anilist import resolve_best_poster
+                    res_p = await resolve_best_poster(title, ad_res.get("poster"))
+                    if res_p:
+                        poster_url = res_p
+                        _poster_cache[movie_slug] = poster_url
                 ad_q = ad_res.get("quality", "").lower()
                 ad_srv = VideoServer(
                     name="AnimeDrive",
@@ -534,9 +543,12 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
                 log.info("Checking ToonFlix fallback for movie '%s' [%s]", title, quality_pref)
                 tf_res = await toonflix.resolve_episode(title, season=1, episode=1, quality_pref=quality_pref)
                 if tf_res and tf_res.get("url"):
-                    if tf_res.get("poster") and not poster_url:
-                        poster_url = tf_res["poster"]
-                        _poster_cache[movie_slug] = poster_url
+                    if not poster_url:
+                        from utils.anilist import resolve_best_poster
+                        res_p = await resolve_best_poster(title, tf_res.get("poster"))
+                        if res_p:
+                            poster_url = res_p
+                            _poster_cache[movie_slug] = poster_url
                     tf_q = tf_res.get("quality", "").lower()
                     tf_srv = VideoServer(
                         name="ToonFlix",
@@ -668,10 +680,15 @@ async def _resolve_destination_channel(series_slug: str, series_title: str = "",
             auto_chan = await db.get_config("auto_channel_creation", default=False)
             from bot.userbot import userbot_manager
             if auto_chan and userbot_manager and userbot_manager.is_active:
+                from utils.anilist import resolve_best_poster
+                resolved_poster = await resolve_best_poster(
+                    series_title or series_slug,
+                    poster_url or _poster_cache.get(series_slug, "")
+                )
                 mapping = await userbot_manager.create_anime_channel(
                     series_title=series_title or series_slug,
                     series_slug=series_slug,
-                    poster_url=poster_url,
+                    poster_url=resolved_poster,
                 )
         if mapping and mapping.get("channel_id"):
             return mapping["channel_id"]
@@ -1013,10 +1030,13 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
                     )
                     ad_res = await animedrive.resolve_episode(lookup_title, season=s_num, episode=ep_num, quality_pref=chosen_quality.resolution)
                     if ad_res and ad_res.get("url"):
-                        if ad_res.get("poster") and not poster_url:
-                            poster_url = ad_res["poster"]
-                            if series_slug:
-                                _poster_cache[series_slug] = poster_url
+                        if not poster_url:
+                            from utils.anilist import resolve_best_poster
+                            res_p = await resolve_best_poster(lookup_title, ad_res.get("poster"))
+                            if res_p:
+                                poster_url = res_p
+                                if series_slug:
+                                    _poster_cache[series_slug] = poster_url
                         success, sent_msg = await download_and_upload(
                             chat_id, ad_res["url"], ad_res["quality"], filename, title, progress_msg, client,
                             referer=ad_res.get("referer", "https://hubcloud.ist/"),
@@ -1039,10 +1059,13 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
                     )
                     tf_res = await toonflix.resolve_episode(lookup_title, season=s_num, episode=ep_num, quality_pref=chosen_quality.resolution)
                     if tf_res and tf_res.get("url"):
-                        if tf_res.get("poster") and not poster_url:
-                            poster_url = tf_res["poster"]
-                            if series_slug:
-                                _poster_cache[series_slug] = poster_url
+                        if not poster_url:
+                            from utils.anilist import resolve_best_poster
+                            res_p = await resolve_best_poster(lookup_title, tf_res.get("poster"))
+                            if res_p:
+                                poster_url = res_p
+                                if series_slug:
+                                    _poster_cache[series_slug] = poster_url
                         success, sent_msg = await download_and_upload(
                             chat_id, tf_res["url"], tf_res["quality"], filename, title, progress_msg, client,
                             referer=tf_res.get("referer", "https://drive.toonflix.in/"),

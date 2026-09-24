@@ -1,7 +1,15 @@
 """Telegram MTProto framework provider — powered by WZGram with Pyrogram fallback."""
 
 from __future__ import annotations
+import asyncio
 import sys
+
+# Ensure an event loop exists for pyrogram.sync wrap on Python 3.12+
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
 try:
     import wzgram as tg

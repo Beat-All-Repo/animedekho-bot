@@ -90,10 +90,12 @@ class AnimeDriveExtractor:
                     img = art.find("img")
                     if a and title_el:
                         title_text = title_el.get_text(strip=True)
+                        raw_p = img.get("src") or img.get("data-src", "") if img else ""
+                        from utils.anilist import is_valid_poster_url
                         results.append({
                             "title": title_text,
                             "url": a["href"],
-                            "poster": img.get("src") or img.get("data-src", "") if img else "",
+                            "poster": raw_p if is_valid_poster_url(raw_p) else "",
                         })
                 if results:
                     return results

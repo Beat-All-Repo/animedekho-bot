@@ -602,6 +602,13 @@ async def download_and_upload(
     thumb_path = None
 
     try:
+        if not poster_url:
+            try:
+                from utils.anilist import resolve_best_poster
+                poster_url = await resolve_best_poster(title, "")
+            except Exception:
+                pass
+
         if poster_url:
             try:
                 from bot.library import _download_poster

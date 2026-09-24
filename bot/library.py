@@ -19,10 +19,15 @@ log = logging.getLogger(__name__)
 
 async def _download_poster(url: str) -> str | None:
     """Download poster image to a temp file, return path or None."""
-    if not url:
+    from utils.anilist import is_valid_poster_url
+    if not url or not is_valid_poster_url(url):
         return None
     try:
-        async with aiohttp.ClientSession() as session:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status != 200:
                     log.warning("Poster download failed: HTTP %d for %s", resp.status, url[:80])
@@ -34,7 +39,7 @@ async def _download_poster(url: str) -> str | None:
                 elif "webp" in ct:
                     ext = ".webp"
                 data = await resp.read()
-                if len(data) < 1000:
+                if len(data) < 1500:
                     log.warning("Poster too small (%d bytes), skipping", len(data))
                     return None
                 tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False, dir=tempfile.gettempdir())
@@ -108,6 +113,10 @@ class LibraryManager:
     ):
         now = datetime.now(timezone.utc).isoformat()
 
+        # Resolve authoritative AniList poster
+        from utils.anilist import resolve_best_poster
+        poster_url = await resolve_best_poster(series_title, poster_url)
+
         # Save file mapping
         await self.db.files.update_one(
             {
@@ -163,45 +172,52 @@ class LibraryManager:
 
         if entry and entry.get("message_id"):
             msg_id = entry["message_id"]
-            try:
-                if entry.get("has_poster"):
-                    await self.client.edit_message_caption(
-                        chat_id=self.channel,
-                        message_id=msg_id,
-                        caption=caption[:CAPTION_LIMIT],
-                        parse_mode=enums.ParseMode.HTML,
-                        reply_markup=markup,
-                    )
-                else:
-                    await self.client.edit_message_text(
-                        chat_id=self.channel,
-                        message_id=msg_id,
-                        text=caption[:CAPTION_LIMIT],
-                        parse_mode=enums.ParseMode.HTML,
-                        disable_web_page_preview=True,
-                        reply_markup=markup,
-                    )
-                # Update DB entry
-                await self.db.library.update_one(
-                    {"_id": entry["_id"]},
-                    {"$set": {
-                        "series_title": series_title,
-                        "episode_count": len(sorted_eps),
-                        "qualities": sorted_qualities,
-                        "updated_at": now,
-                        "poster_url": poster_url or entry.get("poster_url"),
-                    }},
-                )
-                log.info("Updated album for %s: %d episodes, qualities: %s",
-                         series_slug, len(sorted_eps), sorted_qualities)
-                return
-            except Exception as e:
-                log.warning("Failed to update album message %d, recreating: %s", msg_id, e)
-                # Delete old message if possible
+            if not entry.get("has_poster") and poster_url:
+                # Upgrade text-only album to photo album by deleting old text message
                 try:
                     await self.client.delete_messages(self.channel, msg_id)
                 except Exception:
                     pass
+            else:
+                try:
+                    if entry.get("has_poster"):
+                        await self.client.edit_message_caption(
+                            chat_id=self.channel,
+                            message_id=msg_id,
+                            caption=caption[:CAPTION_LIMIT],
+                            parse_mode=enums.ParseMode.HTML,
+                            reply_markup=markup,
+                        )
+                    else:
+                        await self.client.edit_message_text(
+                            chat_id=self.channel,
+                            message_id=msg_id,
+                            text=caption[:CAPTION_LIMIT],
+                            parse_mode=enums.ParseMode.HTML,
+                            disable_web_page_preview=True,
+                            reply_markup=markup,
+                        )
+                    # Update DB entry
+                    await self.db.library.update_one(
+                        {"_id": entry["_id"]},
+                        {"$set": {
+                            "series_title": series_title,
+                            "episode_count": len(sorted_eps),
+                            "qualities": sorted_qualities,
+                            "updated_at": now,
+                            "poster_url": poster_url or entry.get("poster_url"),
+                        }},
+                    )
+                    log.info("Updated album for %s: %d episodes, qualities: %s",
+                             series_slug, len(sorted_eps), sorted_qualities)
+                    return
+                except Exception as e:
+                    log.warning("Failed to update album message %d, recreating: %s", msg_id, e)
+                    # Delete old message if possible
+                    try:
+                        await self.client.delete_messages(self.channel, msg_id)
+                    except Exception:
+                        pass
 
         # Create new album message
         try:
@@ -441,12 +457,16 @@ class LibraryManager:
                 mapping = await self.db.get_channel_mapping(slug)
                 album_mode = await self.db.get_config("album_mode", default="channel")
 
+                from utils.anilist import resolve_best_poster
+                series_title = a.get("series_title", slug)
+                poster_url = await resolve_best_poster(series_title, a.get("poster_url"))
+
                 markup = self._build_album_buttons(
                     slug, sorted_eps, sorted_qualities, is_movie,
                     channel_mapping=mapping, album_mode=album_mode,
                 )
                 caption = self._format_album_caption(
-                    a.get("series_title", slug), sorted_eps, sorted_qualities, is_movie, a.get("poster_url"),
+                    series_title, sorted_eps, sorted_qualities, is_movie, poster_url,
                     channel_mapping=mapping,
                 )
 

@@ -150,7 +150,15 @@ class AnimeDekhoAPI:
     async def get_series(self, slug: str) -> Series:
         url = f"{cfg.base_url}{cfg.series_path}/{slug}/"
         html = await http_client.get(url)
-        return parse_series_detail(html, slug)
+        series = parse_series_detail(html, slug)
+        try:
+            from utils.anilist import resolve_best_poster
+            best = await resolve_best_poster(series.title, series.poster)
+            if best:
+                series.poster = best
+        except Exception as e:
+            log.debug("AniList poster resolution error for series %s: %s", slug, e)
+        return series
 
     async def get_episode(self, ep_slug: str) -> Episode:
         url = f"{cfg.base_url}{cfg.episode_path}/{ep_slug}/"
@@ -193,7 +201,15 @@ class AnimeDekhoAPI:
             except Exception as e:
                 log.warning("Verification shortlink failed: %s", e)
 
-        return parse_movie_page(html, slug)
+        movie = parse_movie_page(html, slug)
+        try:
+            from utils.anilist import resolve_best_poster
+            best = await resolve_best_poster(movie.title, movie.poster)
+            if best:
+                movie.poster = best
+        except Exception as e:
+            log.debug("AniList poster resolution error for movie %s: %s", slug, e)
+        return movie
 
     # ── Video server resolution ───────────────────────────────────
 

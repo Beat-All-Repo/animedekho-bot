@@ -44,10 +44,12 @@ class ToonflixExtractor:
                 title_el = a.find(["h2", "h3", "h4", "h1"])
                 img = a.find("img")
                 if link and title_el:
+                    raw_p = img.get("src") or img.get("data-src", "") if img else ""
+                    from utils.anilist import is_valid_poster_url
                     results.append({
                         "title": title_el.get_text(strip=True),
                         "url": link["href"],
-                        "poster": img.get("src") or img.get("data-src", "") if img else "",
+                        "poster": raw_p if is_valid_poster_url(raw_p) else "",
                     })
             return results
         except Exception as e:
