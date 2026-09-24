@@ -604,6 +604,15 @@ async def download_and_upload(
         )
 
         if not success:
+            from bot.database import db
+            if db:
+                try:
+                    await db.log_download_failure(
+                        title=title, quality=quality, source=referer or "stream",
+                        error="Could not download from media server", user_id=chat_id,
+                    )
+                except Exception:
+                    pass
             await progress_msg.edit_text(
                 f"❌ <b>Download Failed</b>\n"
                 f"┌ 📺 {title}\n"
@@ -612,6 +621,15 @@ async def download_and_upload(
             return False, None
 
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            from bot.database import db
+            if db:
+                try:
+                    await db.log_download_failure(
+                        title=title, quality=quality, source=referer or "stream",
+                        error="File is empty (0 bytes)", user_id=chat_id,
+                    )
+                except Exception:
+                    pass
             await progress_msg.edit_text(
                 f"❌ <b>Download Failed</b>\n"
                 f"┌ 📺 {title}\n"
@@ -622,6 +640,15 @@ async def download_and_upload(
         file_size = os.path.getsize(output_path)
 
         if file_size > TG_UPLOAD_LIMIT:
+            from bot.database import db
+            if db:
+                try:
+                    await db.log_download_failure(
+                        title=title, quality=quality, source=referer or "stream",
+                        error=f"File exceeds Telegram 2GB limit ({_format_size(file_size)})", user_id=chat_id,
+                    )
+                except Exception:
+                    pass
             await progress_msg.edit_text(
                 f"⚠️ <b>File Too Large</b>\n"
                 f"┌ 📺 {title}\n"
@@ -706,6 +733,15 @@ async def download_and_upload(
 
     except Exception as e:
         log.exception("Download/upload error for %s", title)
+        from bot.database import db
+        if db:
+            try:
+                await db.log_download_failure(
+                    title=title, quality=quality, source=referer or "stream",
+                    error=str(e), user_id=chat_id,
+                )
+            except Exception:
+                pass
         try:
             await progress_msg.edit_text(
                 f"❌ <b>Error</b>\n"

@@ -24,6 +24,7 @@ class Database:
         self.ai_facts = self.db["ai_facts"]
         self.child_bots = self.db["child_bots"]
         self.channel_mappings = self.db["channel_mappings"]
+        self.download_errors = self.db["download_errors"]
 
     async def init_indexes(self):
         """Create necessary indexes."""
@@ -45,6 +46,8 @@ class Database:
         await self.child_bots.create_index("username")
         await self.channel_mappings.create_index("series_slug", unique=True)
         await self.channel_mappings.create_index("channel_id")
+        await self.download_errors.create_index([("timestamp", -1)])
+        await self.download_errors.create_index("series_slug")
         log.info("MongoDB indexes created")
 
     # ── User management ───────────────────────────────────────────
@@ -538,6 +541,73 @@ class Database:
         except Exception as e:
             log.warning("Failed to delete userbot session: %s", e)
             return False
+
+    # ── Download Failure Tracking & Database Health ─────────────────
+
+    async def log_download_failure(
+        self,
+        title: str,
+        quality: str = "",
+        source: str = "",
+        error: str = "",
+        series_slug: str = "",
+        user_id: int = 0,
+    ):
+        """Record a failed download event for health monitoring and diagnostics."""
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            await self.download_errors.insert_one({
+                "title": title,
+                "quality": quality,
+                "source": source,
+                "error": str(error)[:500],
+                "series_slug": series_slug,
+                "user_id": user_id,
+                "timestamp": now,
+            })
+            # Keep latest 200 error records
+            count = await self.download_errors.count_documents({})
+            if count > 200:
+                oldest = await self.download_errors.find().sort("timestamp", 1).limit(count - 150).to_list(length=None)
+                if oldest:
+                    await self.download_errors.delete_many({"_id": {"$in": [d["_id"] for d in oldest]}})
+        except Exception as e:
+            log.warning("Failed to record download failure in DB: %s", e)
+
+    async def get_recent_download_errors(self, limit: int = 10) -> list[dict]:
+        """Get recent download failure records."""
+        try:
+            cursor = self.download_errors.find().sort("timestamp", -1).limit(limit)
+            return await cursor.to_list(length=limit)
+        except Exception as e:
+            log.warning("Failed to fetch download errors: %s", e)
+            return []
+
+    async def count_download_errors(self, hours: int = 24) -> int:
+        """Count failed downloads within the last N hours."""
+        try:
+            from datetime import timedelta
+            since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+            return await self.download_errors.count_documents({"timestamp": {"$gte": since}})
+        except Exception as e:
+            log.warning("Failed to count download errors: %s", e)
+            return 0
+
+    async def clear_download_errors(self) -> int:
+        """Clear all logged download errors."""
+        try:
+            res = await self.download_errors.delete_many({})
+            return res.deleted_count
+        except Exception as e:
+            log.warning("Failed to clear download errors: %s", e)
+            return 0
+
+    async def ping_database(self) -> float:
+        """Ping MongoDB and return round-trip latency in milliseconds."""
+        import time
+        start = time.perf_counter()
+        await self.db.command("ping")
+        return round((time.perf_counter() - start) * 1000, 2)
 
     def close(self):
         """Close the MongoDB connection."""

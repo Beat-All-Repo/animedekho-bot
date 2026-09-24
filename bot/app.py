@@ -16,6 +16,11 @@ async def _on_start(client: Client):
     global active_bot_client
     active_bot_client = client
 
+    # Init Health monitoring and memory log buffer
+    from bot.health import set_boot_time, setup_health_logging
+    set_boot_time()
+    setup_health_logging()
+
     from utils.http import http_client
     await http_client.start()
     log.info("HTTP client started")
@@ -141,6 +146,9 @@ async def _on_start(client: Client):
                 BotCommand("albummode", "Configure album display mode"),
                 BotCommand("channels", "List mapped anime channels"),
                 BotCommand("createchannel", "Create channel for anime"),
+                BotCommand("health", "System health & bot status"),
+                BotCommand("logs", "Environment logs & export"),
+                BotCommand("errors", "Recent download errors"),
             ], scope=BotCommandScopeChat(settings.bot.owner_id))
         log.info("Bot commands menu set successfully")
     except Exception as e:

@@ -11,6 +11,7 @@ from .admin import (
     cmd_addbot, cmd_delbot, cmd_bots, cmd_setbotquality, cmd_refreshalbums,
     cmd_login, cmd_logout, cmd_userbot, cmd_cancel, cmd_autochannel,
     cmd_albummode, cmd_createchannel, cmd_mapchannel, cmd_unmapchannel, cmd_channels,
+    cmd_health, cmd_logs, cmd_errors, cmd_clearerrors, health_callback,
 )
 from .admin_ai import cmd_setai, cmd_ai
 
@@ -23,6 +24,7 @@ __all__ = [
     "cmd_addbot", "cmd_delbot", "cmd_bots", "cmd_setbotquality", "cmd_refreshalbums",
     "cmd_login", "cmd_logout", "cmd_userbot", "cmd_cancel", "cmd_autochannel",
     "cmd_albummode", "cmd_createchannel", "cmd_mapchannel", "cmd_unmapchannel", "cmd_channels",
+    "cmd_health", "cmd_logs", "cmd_errors", "cmd_clearerrors", "health_callback",
     "register_handlers",
 ]
 
@@ -61,6 +63,15 @@ def register_handlers(app: Client):
     app.add_handler(MessageHandler(cmd_mapchannel, filters.command("mapchannel") & filters.private))
     app.add_handler(MessageHandler(cmd_unmapchannel, filters.command("unmapchannel") & filters.private))
     app.add_handler(MessageHandler(cmd_channels, filters.command("channels") & filters.private))
+
+    # Health, Diagnostics & System Monitoring
+    app.add_handler(MessageHandler(cmd_health, filters.command(["health", "status"]) & filters.private))
+    app.add_handler(MessageHandler(cmd_logs, filters.command("logs") & filters.private))
+    app.add_handler(MessageHandler(cmd_errors, filters.command("errors") & filters.private))
+    app.add_handler(MessageHandler(cmd_clearerrors, filters.command("clearerrors") & filters.private))
+
+    # Health callbacks
+    app.add_handler(CallbackQueryHandler(health_callback, filters.regex(r"^health:")))
 
     # Delete callbacks (owner-only, before general router)
     app.add_handler(CallbackQueryHandler(delete_callback, filters.regex(r"^del:")))

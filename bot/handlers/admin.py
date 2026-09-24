@@ -1,8 +1,9 @@
 """Owner-only admin commands."""
 
 import logging
+import os
 from pyrogram import Client, enums
-from pyrogram.types import Message
+from pyrogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.auth import require_owner, add_user, remove_user, get_users, is_owner
 import bot.logger
@@ -809,3 +810,145 @@ async def cmd_channels(client: Client, message: Message):
     if len(text) > 4000:
         text = text[:4000] + "\n..."
     await message.reply_text(text, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+
+
+# ── Health, Diagnostics & System Monitoring ──────────────────────
+
+
+@require_owner
+async def cmd_health(client: Client, message: Message):
+    """
+    System health, bot status, and diagnostic dashboard.
+    Usage:
+      /health - Full diagnostic dashboard
+      /health errors - Recent download failure details
+      /health logs - Environment log events
+    """
+    from bot.health import format_health_dashboard, format_download_errors_view, format_logs_view
+    args = _parse_args(message)
+    sub = args[0].lower() if args else ""
+
+    if sub in ("error", "errors", "fail", "failed"):
+        text, markup = await format_download_errors_view()
+        await message.reply_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+    elif sub in ("log", "logs"):
+        text, markup = format_logs_view()
+        await message.reply_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+    else:
+        status_msg = await message.reply_text("🩺 Checking all bot connections and system metrics...")
+        text, markup = await format_health_dashboard(client)
+        await status_msg.edit_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+
+
+@require_owner
+async def cmd_logs(client: Client, message: Message):
+    """View recent environment log events or export as text document."""
+    from bot.health import format_logs_view, ring_buffer_handler
+    args = _parse_args(message)
+    sub = args[0].lower() if args else ""
+
+    if sub in ("export", "file", "download"):
+        import tempfile
+        logs_text = ring_buffer_handler.get_formatted_text(limit=150)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(logs_text)
+            f_path = f.name
+        try:
+            await client.send_document(
+                chat_id=message.chat.id,
+                document=f_path,
+                file_name="bot_environment_logs.txt",
+                caption="📜 <b>Bot Environment Logs Export</b> (Latest 150 events)",
+                parse_mode=enums.ParseMode.HTML,
+            )
+        finally:
+            if os.path.exists(f_path):
+                os.remove(f_path)
+    elif sub in ("error", "errors"):
+        text, markup = format_logs_view(level="ERROR")
+        await message.reply_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+    else:
+        text, markup = format_logs_view()
+        await message.reply_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+
+
+@require_owner
+async def cmd_errors(client: Client, message: Message):
+    """View recent download failures."""
+    from bot.health import format_download_errors_view
+    text, markup = await format_download_errors_view()
+    await message.reply_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+
+
+@require_owner
+async def cmd_clearerrors(client: Client, message: Message):
+    """Clear all logged download errors from database."""
+    from bot.database import db
+    if not db:
+        await message.reply_text("⚠️ Database not available.")
+        return
+    cleared = await db.clear_download_errors()
+    await message.reply_text(f"🧹 Cleared <b>{cleared}</b> download error records.", parse_mode=enums.ParseMode.HTML)
+
+
+async def health_callback(client: Client, query: CallbackQuery):
+    """Handle interactive buttons on the health dashboard."""
+    from bot.auth import is_owner
+    if not is_owner(query.from_user.id):
+        await query.answer("⛔ Owner only.", show_alert=True)
+        return
+
+    data = query.data
+    from bot.health import format_health_dashboard, format_download_errors_view, format_logs_view
+    from bot.database import db
+
+    if data in ("health:refresh", "health:back"):
+        await query.answer("Refreshing health metrics...")
+        text, markup = await format_health_dashboard(client)
+        try:
+            await query.edit_message_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            pass
+
+    elif data == "health:errors":
+        await query.answer()
+        text, markup = await format_download_errors_view()
+        try:
+            await query.edit_message_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            pass
+
+    elif data == "health:logs":
+        await query.answer()
+        text, markup = format_logs_view()
+        try:
+            await query.edit_message_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            pass
+
+    elif data == "health:logs_errors":
+        await query.answer()
+        text, markup = format_logs_view(level="ERROR")
+        try:
+            await query.edit_message_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            pass
+
+    elif data == "health:logs_all":
+        await query.answer()
+        text, markup = format_logs_view()
+        try:
+            await query.edit_message_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            pass
+
+    elif data == "health:clear_errors":
+        count = 0
+        if db:
+            count = await db.clear_download_errors()
+        await query.answer(f"🧹 Cleared {count} error records!", show_alert=True)
+        text, markup = await format_download_errors_view()
+        try:
+            await query.edit_message_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            pass

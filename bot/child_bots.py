@@ -447,6 +447,59 @@ class ChildBotManager:
 
         return False
 
+    async def check_bots_health(self) -> list[dict]:
+        """
+        Check health and connection latency of all registered child worker bots.
+        Returns list of status dicts with bot info, ping latency, and online/offline state.
+        """
+        import time
+        from bot.database import db
+        if not db:
+            return []
+        try:
+            bot_docs = await db.get_child_bots()
+        except Exception as e:
+            log.warning("Failed to fetch child bots for health check: %s", e)
+            return []
+
+        results = []
+        for doc in bot_docs:
+            bot_id = doc.get("bot_id")
+            username = doc.get("username", "")
+            quality = doc.get("quality", "all")
+            files_served = doc.get("files_served", 0)
+            client = self.active_clients.get(bot_id)
+
+            status = {
+                "bot_id": bot_id,
+                "username": username,
+                "quality": quality,
+                "files_served": files_served,
+                "is_active_config": doc.get("is_active", True),
+                "is_connected": False,
+                "ping_ms": None,
+                "first_name": username,
+                "error": None,
+            }
+
+            if not client:
+                status["error"] = "Client not running"
+            elif not client.is_connected:
+                status["error"] = "Client disconnected"
+            else:
+                try:
+                    start_t = time.perf_counter()
+                    me = await client.get_me()
+                    latency = (time.perf_counter() - start_t) * 1000
+                    status["is_connected"] = True
+                    status["ping_ms"] = round(latency, 1)
+                    status["first_name"] = me.first_name or username
+                except Exception as e:
+                    status["error"] = str(e)[:100]
+
+            results.append(status)
+        return results
+
 
 # Singleton instance
 child_bot_manager: ChildBotManager | None = None

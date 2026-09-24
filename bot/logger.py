@@ -127,11 +127,32 @@ class BotLogger:
             f"💾 {file_size_mb:.1f} MB"
         )
 
-    async def log_download_error(self, title: str, error: str):
+    async def log_download_error(
+        self,
+        title: str,
+        error: str,
+        quality: str = "",
+        source: str = "",
+        series_slug: str = "",
+        user_id: int = 0,
+    ):
         await self._send_log(
             f"❌ <b>Download failed:</b> {_esc(title)}\n"
             f"<code>{_esc(error[:300])}</code>"
         )
+        from bot.database import db
+        if db:
+            try:
+                await db.log_download_failure(
+                    title=title,
+                    quality=quality,
+                    source=source,
+                    error=error,
+                    series_slug=series_slug,
+                    user_id=user_id,
+                )
+            except Exception as e:
+                log.warning("Failed to log download failure to DB: %s", e)
 
     async def log_batch_start(self, user_id: int, username: str, series: str, season: int, episode_count: int):
         await self._send_log(

@@ -323,6 +323,40 @@ class UserbotManager:
             "username": self.me.username if self.me else None,
         }
 
+    async def check_health(self) -> dict[str, Any]:
+        """Check userbot health and measure round-trip ping latency."""
+        import time
+        res = {
+            "is_active": self.is_active,
+            "is_connected": False,
+            "ping_ms": None,
+            "user_id": None,
+            "username": None,
+            "first_name": None,
+            "error": None,
+        }
+        if not self.is_active or not self.client:
+            res["error"] = "Userbot not logged in or inactive"
+            return res
+
+        if not self.client.is_connected:
+            res["error"] = "Userbot client disconnected"
+            return res
+
+        try:
+            start_t = time.perf_counter()
+            me = await self.client.get_me()
+            latency = (time.perf_counter() - start_t) * 1000
+            res["is_connected"] = True
+            res["ping_ms"] = round(latency, 1)
+            res["user_id"] = me.id
+            res["username"] = me.username
+            res["first_name"] = me.first_name
+        except Exception as e:
+            res["error"] = str(e)[:100]
+
+        return res
+
     async def create_anime_channel(
         self,
         series_title: str,
