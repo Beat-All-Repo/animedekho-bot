@@ -9,8 +9,8 @@ import tempfile
 from datetime import datetime, timezone
 
 import aiohttp
-from pyrogram import Client, enums
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from bot.telegram import Client, enums
+from bot.telegram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.database import Database
 

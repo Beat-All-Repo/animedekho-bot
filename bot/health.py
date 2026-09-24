@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 import psutil
-from pyrogram import Client, enums
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from bot.telegram import Client, enums
+from bot.telegram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config.settings import settings
 from bot.database import db
@@ -179,8 +179,7 @@ def get_system_stats() -> dict[str, Any]:
         proc = psutil.Process()
         proc_mem_mb = round(proc.memory_info().rss / (1024 ** 2), 1)
 
-        import pyrogram
-        pyrogram_ver = pyrogram.__version__
+        from bot.telegram import FRAMEWORK_NAME, FRAMEWORK_VERSION
 
         return {
             "cpu_pct": cpu_pct,
@@ -192,7 +191,9 @@ def get_system_stats() -> dict[str, Any]:
             "disk_pct": disk_pct,
             "proc_mem_mb": proc_mem_mb,
             "python_ver": platform.python_version(),
-            "pyrogram_ver": pyrogram_ver,
+            "tg_framework": FRAMEWORK_NAME,
+            "tg_framework_ver": FRAMEWORK_VERSION,
+            "pyrogram_ver": FRAMEWORK_VERSION,
             "os_info": f"{platform.system()} {platform.release()}",
         }
     except Exception as e:
@@ -207,6 +208,8 @@ def get_system_stats() -> dict[str, Any]:
             "disk_pct": 0,
             "proc_mem_mb": 0,
             "python_ver": sys.version.split()[0],
+            "tg_framework": "WZGram",
+            "tg_framework_ver": "3.1.2",
             "pyrogram_ver": "unknown",
             "os_info": "Linux",
         }
@@ -342,7 +345,7 @@ async def format_health_dashboard(main_client: Client) -> tuple[str, InlineKeybo
         f"• 🧠 <b>RAM:</b> <code>{system_stats['ram_used_gb']} GB / {system_stats['ram_total_gb']} GB</code> ({system_stats['ram_pct']}% | Bot: {system_stats['proc_mem_mb']}MB)\n"
         f"• ⚡ <b>CPU Load:</b> <code>{system_stats['cpu_pct']}%</code>\n"
         f"• 💾 <b>Disk:</b> <code>{system_stats['disk_used_gb']} GB / {system_stats['disk_total_gb']} GB</code> ({system_stats['disk_pct']}%)\n"
-        f"• 🐍 <b>Runtime:</b> Python <code>{system_stats['python_ver']}</code> | Pyrogram <code>{system_stats['pyrogram_ver']}</code>\n"
+        f"• 🐍 <b>Runtime:</b> Python <code>{system_stats['python_ver']}</code> | {system_stats.get('tg_framework', 'WZGram')} <code>{system_stats.get('tg_framework_ver', system_stats.get('pyrogram_ver', '3.1.2'))}</code>\n"
         f"• 🍃 <b>MongoDB:</b> {db_status}{db_ping}\n"
         f"  └ Files: <code>{db_data['files_count']}</code> | Series: <code>{db_data['series_count']}</code> | Users: <code>{db_data['users_count']}</code> | Channels: <code>{db_data['channels_count']}</code>\n\n"
         f"⚠️ <b>DOWNLOAD FAILURES:</b> {errors_summary}\n"

@@ -1,8 +1,8 @@
-"""Application factory — builds and configures the Pyrogram bot."""
+"""Application factory — builds and configures the WZGram/Pyrogram bot."""
 
 import logging
 
-from pyrogram import Client
+from bot.telegram import Client
 
 from config.settings import settings
 
@@ -67,8 +67,9 @@ async def _on_start(client: Client):
             except Exception:
                 # Raw API fallback for fresh sessions without cached peers
                 try:
-                    from pyrogram.raw.functions.channels import GetChannels
-                    from pyrogram.raw.types import InputChannel
+                    from bot.telegram import raw
+                    GetChannels = raw.functions.channels.GetChannels
+                    InputChannel = raw.types.InputChannel
                     raw_id = abs(cid) % (10 ** 10)  # Strip -100 prefix
                     peer = InputChannel(channel_id=raw_id, access_hash=0)
                     result = await client.invoke(GetChannels(id=[peer]))
@@ -112,7 +113,7 @@ async def _on_start(client: Client):
     log.info("Userbot Manager initialized")
 
     # Set bot commands menu
-    from pyrogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
+    from bot.telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
     try:
         # Default commands for everyone
         await client.set_bot_commands([

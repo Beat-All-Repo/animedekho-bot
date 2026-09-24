@@ -2,7 +2,7 @@
 
 Telegram bot to search, browse, and download anime from [AnimeDekho](https://animedekho.app/) — Hindi, Tamil & Telugu dubbed.
 
-Built with **Pyrogram (MTProto)** for **2GB upload/download support**, multi-server fallbacks, child worker bots load balancing, userbot per-anime channel creation, autonomous AI agent, and real-time health monitoring.
+Built with **WZGram (High-Performance MTProto Fork with WarpCrypto)** for **2GB upload/download support**, multi-server fallbacks, child worker bots load balancing, userbot per-anime channel creation, autonomous AI agent, and real-time health monitoring.
 
 ---
 
@@ -44,7 +44,7 @@ Built with **Pyrogram (MTProto)** for **2GB upload/download support**, multi-ser
 ### 👤 Userbot & Dedicated Per-Anime Channels
 - **MTProto Userbot Login**:
   - Interactive wizard (`/login`) with step-by-step phone number, OTP code, and 2FA cloud password handling.
-  - Or direct login (`/login <string_session>`) using an existing Pyrogram string session.
+  - Or direct login (`/login <string_session>`) using an existing WZGram/Pyrogram string session.
 - **Per-Anime Dedicated Channels**:
   - Automatically creates a dedicated private Telegram channel per anime series.
   - Sets the anime poster as the channel's profile photo.
@@ -173,7 +173,8 @@ Built with **Pyrogram (MTProto)** for **2GB upload/download support**, multi-ser
 │   ├── toonflix.py             # ToonFlix stream extractor
 │   └── shortener.py            # Link shortener bypass (gplinks, vshort, cuty)
 ├── bot/
-│   ├── app.py                  # Pyrogram app factory & lifecycle hooks
+│   ├── app.py                  # WZGram app factory & lifecycle hooks
+│   ├── telegram.py             # Unified Telegram MTProto client provider (WZGram / Pyrogram)
 │   ├── auth.py                 # User authorization & owner guard
 │   ├── child_bots.py           # Child worker bots manager & load balancer
 │   ├── userbot.py              # MTProto userbot session & channel creator

@@ -1,7 +1,7 @@
 """Inline keyboard builders — keeps handlers clean."""
 
 from __future__ import annotations
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from bot.telegram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from api.models import (
     SearchResult, Series, Season, Episode, VideoServer,

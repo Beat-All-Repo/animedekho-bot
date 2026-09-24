@@ -1,5 +1,4 @@
-from pyrogram import Client, filters
-from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from bot.telegram import Client, filters, MessageHandler, CallbackQueryHandler
 
 from .commands import cmd_start, cmd_help, cmd_search
 from .callbacks import callback_router

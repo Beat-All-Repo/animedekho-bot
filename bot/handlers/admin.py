@@ -2,8 +2,8 @@
 
 import logging
 import os
-from pyrogram import Client, enums
-from pyrogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from bot.telegram import Client, enums
+from bot.telegram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.auth import require_owner, add_user, remove_user, get_users, is_owner
 import bot.logger
@@ -259,7 +259,7 @@ async def cmd_delete(client: Client, message: Message):
         await message.reply_text("📂 No downloaded files in the library.")
         return
 
-    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from bot.telegram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from utils.helpers import slug_to_title
 
     buttons = []
@@ -283,9 +283,9 @@ async def delete_callback(client: Client, query):
     """Handle all delete-related callbacks (del:*)."""
     from bot.database import db
     from bot.library import library_manager
-    from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from bot.telegram.types import InlineKeyboardMarkup, InlineKeyboardButton
     from utils.helpers import slug_to_title
-    from pyrogram import enums as pe
+    from bot.telegram import enums as pe
 
     if not db:
         await query.answer("DB not ready", show_alert=True)

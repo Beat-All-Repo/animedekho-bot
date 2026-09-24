@@ -7,8 +7,8 @@ import re
 from datetime import datetime, timezone
 import html as htmlmod
 
-from pyrogram import Client, filters, enums
-from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from bot.telegram import Client, filters, enums
+from bot.telegram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from config.settings import settings
 

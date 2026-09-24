@@ -3,8 +3,8 @@
 import logging
 import re
 
-from pyrogram import Client, enums
-from pyrogram.types import Message
+from bot.telegram import Client, enums
+from bot.telegram.types import Message
 
 from bot.keyboards import main_menu
 from bot.auth import require_approved

@@ -933,7 +933,7 @@ async def tool_download_anime_episode(
     source: str = "auto",
 ) -> str:
     try:
-        from pyrogram import enums
+        from bot.telegram import enums
         from bot.downloader import download_and_upload
         from bot.ai.config import ai_config
 
@@ -1228,7 +1228,7 @@ async def tool_download_anime_episode(
 
 async def tool_download_and_send_anime(stream_url: str, title: str, quality: str = "1080p") -> str:
     try:
-        from pyrogram import enums
+        from bot.telegram import enums
         from config.settings import settings
         from bot.downloader import download_and_upload
         from bot.ai.config import ai_config

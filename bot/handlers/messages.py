@@ -2,8 +2,8 @@
 
 import logging
 
-from pyrogram import Client, enums
-from pyrogram.types import Message
+from bot.telegram import Client, enums
+from bot.telegram.types import Message
 
 from api.client import api
 from bot.keyboards import search_results

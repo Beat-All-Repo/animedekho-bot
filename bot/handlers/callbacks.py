@@ -5,8 +5,8 @@ import asyncio
 import logging
 import os
 
-from pyrogram import Client, enums
-from pyrogram.types import CallbackQuery
+from bot.telegram import Client, enums
+from bot.telegram.types import CallbackQuery
 
 from api.client import api
 from api.models import Quality

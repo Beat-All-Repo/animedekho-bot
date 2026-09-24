@@ -8,8 +8,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from pyrogram import Client, errors
-from pyrogram.types import ChatPrivileges, User
+from bot.telegram import Client, errors
+from bot.telegram.types import ChatPrivileges, User
 
 from config.settings import settings
 from bot.database import db

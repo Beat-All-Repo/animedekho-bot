@@ -3,8 +3,8 @@
 from __future__ import annotations
 import logging
 
-from pyrogram import Client, enums
-from pyrogram.types import Message
+from bot.telegram import Client, enums
+from bot.telegram.types import Message
 
 from bot.ai import ai_config, ai_agent
 from bot.auth import require_owner

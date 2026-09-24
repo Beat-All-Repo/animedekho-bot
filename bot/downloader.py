@@ -14,8 +14,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import aiohttp
-from pyrogram import Client, enums
-from pyrogram.types import Message
+from bot.telegram import Client, enums
+from bot.telegram.types import Message
 
 from api.models import Quality
 

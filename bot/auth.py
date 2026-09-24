@@ -4,8 +4,8 @@ from __future__ import annotations
 import logging
 from functools import wraps
 
-from pyrogram import Client
-from pyrogram.types import (
+from bot.telegram import Client
+from bot.telegram.types import (
     Message, CallbackQuery,
     InlineKeyboardButton, InlineKeyboardMarkup,
 )

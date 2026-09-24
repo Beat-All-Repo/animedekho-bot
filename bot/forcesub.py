@@ -3,8 +3,8 @@
 from __future__ import annotations
 import logging
 
-from pyrogram import Client
-from pyrogram.enums import ChatMemberStatus
+from bot.telegram import Client
+from bot.telegram.enums import ChatMemberStatus
 
 log = logging.getLogger(__name__)
 

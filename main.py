@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AnimeDekho Telegram Bot — entrypoint (Pyrogram/MTProto)."""
+"""AnimeDekho Telegram Bot — entrypoint (WZGram/MTProto)."""
 
 import logging
 import sys
@@ -9,7 +9,10 @@ from bot.app import create_app
 
 
 import asyncio
-from pyrogram import idle
+try:
+    from wzgram import idle
+except ImportError:
+    from pyrogram import idle
 
 async def async_main():
     app = create_app()
@@ -33,7 +36,7 @@ def main():
     )
 
     log = logging.getLogger("animedekho")
-    log.info("Starting AnimeDekho Bot (Pyrogram/MTProto)...")
+    log.info("Starting AnimeDekho Bot (WZGram/MTProto)...")
 
     try:
         asyncio.run(async_main())
