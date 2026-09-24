@@ -298,7 +298,11 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
     # If AnimeDrive does NOT have 4K -> switch to ToonFlix (which also has 4K).
     # If user wants another quality (e.g. 1080p) and AnimeDekho lacks it -> switch to AnimeDrive, then ToonFlix.
     has_exact = any(q.resolution.lower() == quality_pref.lower() for _, q in candidates)
-    is_4k = quality_pref.lower() in ("4k", "2160p")
+    is_4k = quality_pref.lower() in ("4k", "2160p", "2160")
+
+    def _is_4k_satisfying(q_str: str) -> bool:
+        q = q_str.lower()
+        return any(k in q for k in ("4k", "2160", "1080", "hq", "10bit", "10-bit", "x265", "hevc"))
 
     if not has_exact or is_4k:
         found_4k = False
@@ -318,12 +322,12 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
                 )
                 if ad_res.get("poster") and series_slug and not _poster_cache.get(series_slug):
                     _poster_cache[series_slug] = ad_res["poster"]
-                if is_4k and ad_q in ("4k", "2160p"):
-                    # Exact 4K found on AnimeDrive! AnimeDrive is default for 4K
+                if is_4k and _is_4k_satisfying(ad_q):
+                    # Exact 4K or enhanced 1080p HQ tier found on AnimeDrive! AnimeDrive is default for 4K
                     candidates.insert(0, (ad_srv, ad_srv.qualities[0]))
                     has_exact = True
                     found_4k = True
-                    log.info("AnimeDrive provided exact 4K stream for '%s' S%dE%d", series_title, season, ep_num)
+                    log.info("AnimeDrive provided 4K-tier stream [%s] for '%s' S%dE%d", ad_res["quality"], series_title, season, ep_num)
                 elif not is_4k and ad_q == quality_pref.lower():
                     # Exact requested quality found on AnimeDrive
                     candidates.insert(0, (ad_srv, ad_srv.qualities[0]))
@@ -350,10 +354,11 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
                         is_resolved=True,
                         qualities=[Quality(resolution=tf_res["quality"], url=tf_res["url"])],
                     )
-                    if (is_4k and tf_q in ("4k", "2160p")) or (not is_4k and tf_q == quality_pref.lower()):
+                    if (is_4k and _is_4k_satisfying(tf_q)) or (not is_4k and tf_q == quality_pref.lower()):
                         candidates.insert(0, (tf_srv, tf_srv.qualities[0]))
                         has_exact = True
-                        log.info("ToonFlix provided exact %s stream candidate", tf_res["quality"])
+                        found_4k = True
+                        log.info("ToonFlix provided 4K-tier %s stream candidate", tf_res["quality"])
                     else:
                         candidates.append((tf_srv, tf_srv.qualities[0]))
             except Exception as e:
@@ -412,7 +417,9 @@ async def _handle_download(client: Client, q: CallbackQuery, quality_pref: str, 
 
     # Send progress message
     quality_label = primary_quality.resolution
-    if primary_quality.resolution != quality_pref and primary_quality.resolution != "auto":
+    if is_4k and primary_quality.resolution.lower() not in ("4k", "2160p", "2160"):
+        quality_label = f"4K [{primary_quality.resolution}]"
+    elif primary_quality.resolution != quality_pref and primary_quality.resolution != "auto":
         quality_label = f"{primary_quality.resolution} (requested {quality_pref})"
 
     progress_msg = await q.message.reply_text(
@@ -480,7 +487,11 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
     # If AnimeDrive does NOT have 4K -> switch to ToonFlix (which also has 4K).
     # If user wants another quality (e.g. 1080p) and AnimeDekho lacks it -> switch to AnimeDrive, then ToonFlix.
     has_exact = any(q.resolution.lower() == quality_pref.lower() for _, q in candidates)
-    is_4k = quality_pref.lower() in ("4k", "2160p")
+    is_4k = quality_pref.lower() in ("4k", "2160p", "2160")
+
+    def _is_4k_satisfying(q_str: str) -> bool:
+        q = q_str.lower()
+        return any(k in q for k in ("4k", "2160", "1080", "hq", "10bit", "10-bit", "x265", "hevc"))
 
     if not has_exact or is_4k:
         found_4k = False
@@ -501,12 +512,12 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
                     is_resolved=True,
                     qualities=[Quality(resolution=ad_res["quality"], url=ad_res["url"])],
                 )
-                if is_4k and ad_q in ("4k", "2160p"):
-                    # Exact 4K found on AnimeDrive! AnimeDrive is default for 4K
+                if is_4k and _is_4k_satisfying(ad_q):
+                    # Exact 4K or enhanced 1080p HQ tier found on AnimeDrive! AnimeDrive is default for 4K
                     candidates.insert(0, (ad_srv, ad_srv.qualities[0]))
                     has_exact = True
                     found_4k = True
-                    log.info("AnimeDrive provided exact 4K movie stream for '%s'", title)
+                    log.info("AnimeDrive provided 4K-tier movie stream [%s] for '%s'", ad_res["quality"], title)
                 elif not is_4k and ad_q == quality_pref.lower():
                     candidates.insert(0, (ad_srv, ad_srv.qualities[0]))
                     has_exact = True
@@ -533,10 +544,11 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
                         is_resolved=True,
                         qualities=[Quality(resolution=tf_res["quality"], url=tf_res["url"])],
                     )
-                    if (is_4k and tf_q in ("4k", "2160p")) or (not is_4k and tf_q == quality_pref.lower()):
+                    if (is_4k and _is_4k_satisfying(tf_q)) or (not is_4k and tf_q == quality_pref.lower()):
                         candidates.insert(0, (tf_srv, tf_srv.qualities[0]))
                         has_exact = True
-                        log.info("ToonFlix provided exact %s movie candidate", tf_res["quality"])
+                        found_4k = True
+                        log.info("ToonFlix provided 4K-tier %s movie candidate", tf_res["quality"])
                     else:
                         candidates.append((tf_srv, tf_srv.qualities[0]))
             except Exception as e:
@@ -575,8 +587,14 @@ async def _handle_movie_download(client: Client, q: CallbackQuery, quality_pref:
             user.id, user.username or str(user.id), title, primary_quality.resolution
         )
 
+    quality_label = primary_quality.resolution
+    if is_4k and primary_quality.resolution.lower() not in ("4k", "2160p", "2160"):
+        quality_label = f"4K [{primary_quality.resolution}]"
+    elif primary_quality.resolution != quality_pref and primary_quality.resolution != "auto":
+        quality_label = f"{primary_quality.resolution} (requested {quality_pref})"
+
     progress_msg = await q.message.reply_text(
-        f"📥 <b>Starting download:</b> {esc(title)} [{primary_quality.resolution}]",
+        f"📥 <b>Starting download:</b> {esc(title)} [{quality_label}]",
         parse_mode=enums.ParseMode.HTML,
     )
 
@@ -683,83 +701,132 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                             "episode_key": ep_key,
                         })
 
-            # Resolve episode (lazy with priority order)
-            episode = await api.get_episode(ep.slug)
-            resolved = await _lazy_resolve_servers(episode.servers, quality_pref)
-
-            if not resolved:
-                log.warning("No servers for batch ep %s", ep.slug)
-                continue
-
-            candidates = _find_quality_candidates(resolved or [], quality_pref)
-            if not candidates and quality_pref.lower() in ("4k", "2160p", "2160"):
-                # AnimeDekho lacks 4K — fallback to 1080p
-                candidates = _find_quality_candidates(resolved or [], "1080p")
-                if not candidates:
-                    candidates = _find_quality_candidates(resolved or [], "720p")
-
+            is_4k = quality_pref.lower() in ("4k", "2160p", "2160")
             success = False
             sent_msg = None
-            chosen_q = candidates[0][1] if candidates else Quality(resolution=quality_pref, url="")
-            filename = make_episode_filename(series.title, season, ep.number, chosen_q.resolution)
+            chosen_q = Quality(resolution=quality_pref, url="")
 
             # Create a per-episode progress message
+            ep_quality_label = f"4K Tier" if is_4k else quality_pref
             ep_msg = await client.send_message(
                 chat_id,
-                f"📥 <b>Downloading:</b> S{season}E{ep.number} [{chosen_q.resolution}]",
+                f"📥 <b>Downloading:</b> S{season}E{ep.number} [{ep_quality_label}]",
                 parse_mode=enums.ParseMode.HTML,
             )
             sent_messages.append(ep_msg)
 
-            if candidates:
-                for attempt, (srv, quality) in enumerate(candidates, 1):
-                    chosen_q = quality
-                    success, sent_msg = await download_and_upload(
-                        chat_id, quality.master_url or quality.url, quality.resolution, filename,
-                        f"{series.title} S{season}E{ep.number}",
-                        ep_msg, client, variant_url=quality.url,
-                        poster_url=series.poster or "",
-                    )
-                    if success:
-                        break
-
-            # Fallback 1: Secondary - AnimeDrive
-            if not success:
+            if is_4k:
+                # 4K Batch: AnimeDrive is default for 4K and enhanced 1080p HQ tiers
                 try:
                     from extractors.animedrive import animedrive
-                    ad_res = await animedrive.resolve_episode(series.title, season=season, episode=ep.number, quality_pref=quality_pref)
+                    ad_res = await animedrive.resolve_episode(series.title, season=season, episode=ep.number, quality_pref="4K")
                     if ad_res and ad_res.get("url"):
+                        chosen_q = Quality(resolution=ad_res.get("quality", "4K"), url=ad_res["url"])
+                        filename = make_episode_filename(series.title, season, ep.number, chosen_q.resolution)
                         success, sent_msg = await download_and_upload(
-                            chat_id, ad_res["url"], ad_res["quality"],
-                            make_episode_filename(series.title, season, ep.number, ad_res["quality"]),
+                            chat_id, ad_res["url"], chosen_q.resolution,
+                            filename,
                             f"{series.title} S{season}E{ep.number}",
                             ep_msg, client,
                             referer=ad_res.get("referer", "https://hubcloud.ist/"),
                             poster_url=series.poster or ad_res.get("poster", ""),
                         )
-                        if success:
-                            chosen_q = Quality(resolution=ad_res["quality"], url=ad_res["url"])
                 except Exception as e:
-                    log.warning("Batch AnimeDrive fallback failed for ep %s: %s", ep.slug, e)
+                    log.warning("Batch AnimeDrive 4K error for ep %s: %s", ep.slug, e)
 
-            # Fallback 2: Tertiary - ToonFlix
-            if not success:
-                try:
-                    from extractors.toonflix import toonflix
-                    tf_res = await toonflix.resolve_episode(series.title, season=season, episode=ep.number, quality_pref=quality_pref)
-                    if tf_res and tf_res.get("url"):
+                if not success:
+                    # Tertiary for 4K: ToonFlix
+                    try:
+                        from extractors.toonflix import toonflix
+                        tf_res = await toonflix.resolve_episode(series.title, season=season, episode=ep.number, quality_pref="4K")
+                        if tf_res and tf_res.get("url"):
+                            chosen_q = Quality(resolution=tf_res.get("quality", "4K"), url=tf_res["url"])
+                            filename = make_episode_filename(series.title, season, ep.number, chosen_q.resolution)
+                            success, sent_msg = await download_and_upload(
+                                chat_id, tf_res["url"], chosen_q.resolution,
+                                filename,
+                                f"{series.title} S{season}E{ep.number}",
+                                ep_msg, client,
+                                referer=tf_res.get("referer", "https://drive.toonflix.in/"),
+                                poster_url=series.poster or tf_res.get("poster", ""),
+                            )
+                    except Exception as e:
+                        log.warning("Batch ToonFlix 4K error for ep %s: %s", ep.slug, e)
+
+                if not success:
+                    # Fallback: AnimeDekho top ranked server tier
+                    episode_data = await api.get_episode(ep.slug)
+                    resolved = await _lazy_resolve_servers(episode_data.servers, quality_pref)
+                    candidates = _find_quality_candidates(resolved or [], quality_pref)
+                    if candidates:
+                        for attempt, (srv, quality) in enumerate(candidates, 1):
+                            chosen_q = quality
+                            filename = make_episode_filename(series.title, season, ep.number, chosen_q.resolution)
+                            success, sent_msg = await download_and_upload(
+                                chat_id, quality.master_url or quality.url, quality.resolution, filename,
+                                f"{series.title} S{season}E{ep.number}",
+                                ep_msg, client, variant_url=quality.url,
+                                poster_url=series.poster or "",
+                            )
+                            if success:
+                                break
+            else:
+                # Standard resolution: AnimeDekho first -> AnimeDrive -> ToonFlix
+                episode_data = await api.get_episode(ep.slug)
+                resolved = await _lazy_resolve_servers(episode_data.servers, quality_pref)
+                candidates = _find_quality_candidates(resolved or [], quality_pref) if resolved else []
+
+                if candidates:
+                    chosen_q = candidates[0][1]
+                    filename = make_episode_filename(series.title, season, ep.number, chosen_q.resolution)
+                    for attempt, (srv, quality) in enumerate(candidates, 1):
+                        chosen_q = quality
                         success, sent_msg = await download_and_upload(
-                            chat_id, tf_res["url"], tf_res["quality"],
-                            make_episode_filename(series.title, season, ep.number, tf_res["quality"]),
+                            chat_id, quality.master_url or quality.url, quality.resolution, filename,
                             f"{series.title} S{season}E{ep.number}",
-                            ep_msg, client,
-                            referer=tf_res.get("referer", "https://drive.toonflix.in/"),
-                            poster_url=series.poster or tf_res.get("poster", ""),
+                            ep_msg, client, variant_url=quality.url,
+                            poster_url=series.poster or "",
                         )
                         if success:
-                            chosen_q = Quality(resolution=tf_res["quality"], url=tf_res["url"])
-                except Exception as e:
-                    log.warning("Batch ToonFlix fallback failed for ep %s: %s", ep.slug, e)
+                            break
+
+                # Fallback 1: Secondary - AnimeDrive
+                if not success:
+                    try:
+                        from extractors.animedrive import animedrive
+                        ad_res = await animedrive.resolve_episode(series.title, season=season, episode=ep.number, quality_pref=quality_pref)
+                        if ad_res and ad_res.get("url"):
+                            chosen_q = Quality(resolution=ad_res.get("quality", quality_pref), url=ad_res["url"])
+                            filename = make_episode_filename(series.title, season, ep.number, chosen_q.resolution)
+                            success, sent_msg = await download_and_upload(
+                                chat_id, ad_res["url"], chosen_q.resolution,
+                                filename,
+                                f"{series.title} S{season}E{ep.number}",
+                                ep_msg, client,
+                                referer=ad_res.get("referer", "https://hubcloud.ist/"),
+                                poster_url=series.poster or ad_res.get("poster", ""),
+                            )
+                    except Exception as e:
+                        log.warning("Batch AnimeDrive fallback failed for ep %s: %s", ep.slug, e)
+
+                # Fallback 2: Tertiary - ToonFlix
+                if not success:
+                    try:
+                        from extractors.toonflix import toonflix
+                        tf_res = await toonflix.resolve_episode(series.title, season=season, episode=ep.number, quality_pref=quality_pref)
+                        if tf_res and tf_res.get("url"):
+                            chosen_q = Quality(resolution=tf_res.get("quality", quality_pref), url=tf_res["url"])
+                            filename = make_episode_filename(series.title, season, ep.number, chosen_q.resolution)
+                            success, sent_msg = await download_and_upload(
+                                chat_id, tf_res["url"], chosen_q.resolution,
+                                filename,
+                                f"{series.title} S{season}E{ep.number}",
+                                ep_msg, client,
+                                referer=tf_res.get("referer", "https://drive.toonflix.in/"),
+                                poster_url=series.poster or tf_res.get("poster", ""),
+                            )
+                    except Exception as e:
+                        log.warning("Batch ToonFlix fallback failed for ep %s: %s", ep.slug, e)
 
             if success:
                 completed += 1
@@ -1193,22 +1260,59 @@ def _find_quality_candidates(servers: list, quality_pref: str) -> list[tuple[Vid
                 candidates.append((srv, Quality(resolution="auto", url=srv.direct_url)))
         return candidates
 
+    is_4k = quality_pref.lower() in ("4k", "2160p", "2160")
+
+    if is_4k:
+        # Score and rank all available server qualities for 4K tier
+        # True 4K (2160p) > 1080p HQ x265 / 10-bit > 1080p HQ > 1080p > 720p...
+        def _score_for_4k(res: str) -> int:
+            r = res.lower()
+            if any(k in r for k in ("4k", "2160", "uhd")):
+                return 1000
+            if "1080" in r and "hq" in r and any(k in r for k in ("x265", "hevc", "10bit", "10-bit", "10 bit")):
+                return 950
+            if "1080" in r and "hq" in r:
+                return 900
+            if "1080" in r and any(k in r for k in ("10bit", "10-bit", "10 bit", "x265", "hevc", "bluray", "remux")):
+                return 850
+            if "1080" in r:
+                return 800
+            if "720" in r and any(k in r for k in ("hq", "10bit", "10-bit", "x265")):
+                return 600
+            if "720" in r:
+                return 500
+            if "480" in r:
+                return 300
+            return 100
+
+        scored_pairs = []
+        for srv in sorted_servers:
+            for q in srv.qualities:
+                scored_pairs.append((_score_for_4k(q.resolution), _server_priority(srv), srv, q))
+            if not srv.qualities and srv.direct_url:
+                scored_pairs.append((100, _server_priority(srv), srv, Quality(resolution="auto", url=srv.direct_url)))
+
+        # Sort descending by score, ascending by server priority
+        scored_pairs.sort(key=lambda x: (-x[0], x[1]))
+        return [(srv, q) for _, _, srv, q in scored_pairs]
+
     # Pass 1: exact matches
     for srv in sorted_servers:
         for q in srv.qualities:
-            if q.resolution == quality_pref:
+            if q.resolution.lower() == quality_pref.lower():
                 candidates.append((srv, q))
                 break
 
     # Pass 2: closest numeric matches if no exact
     if not candidates:
-        pref_height = int(quality_pref.replace("p", "")) if quality_pref.endswith("p") and quality_pref[:-1].isdigit() else 0
+        clean_pref = quality_pref.lower().replace("p", "")
+        pref_height = int(clean_pref) if clean_pref.isdigit() else 0
         if pref_height:
             best_diff = float("inf")
             for srv in sorted_servers:
                 for q in srv.qualities:
                     try:
-                        h = int(q.resolution.replace("p", ""))
+                        h = int(q.resolution.lower().replace("p", ""))
                         diff = abs(h - pref_height)
                         if diff < best_diff:
                             best_diff = diff

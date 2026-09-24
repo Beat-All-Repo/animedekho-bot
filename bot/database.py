@@ -134,7 +134,21 @@ class Database:
         if quality and quality.lower() not in ("auto", "any", ""):
             q_clean = quality.strip()
             if q_clean.lower() in ("4k", "2160p", "2160"):
-                q_condition = {"$in": ["4K", "4k", "2160p", "2160P", "2160"]}
+                q_condition = {
+                    "$in": [
+                        "4K", "4k", "2160p", "2160P", "2160",
+                        "1080p HQ", "1080p HQ x265", "1080p 10-Bit", "1080p 10bit",
+                        "1080p x265", "1080p HEVC", "4K (1080p HQ)",
+                    ]
+                }
+            elif q_clean.lower() in ("1080p", "1080"):
+                q_condition = {
+                    "$in": [
+                        "1080p", "1080P", "1080",
+                        "1080p HQ", "1080p HQ x265", "1080p 10-Bit", "1080p 10bit",
+                        "1080p x265", "1080p HEVC",
+                    ]
+                }
             else:
                 q_condition = {"$regex": f"^{re.escape(q_clean)}$", "$options": "i"}
 

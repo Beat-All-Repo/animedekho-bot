@@ -908,13 +908,17 @@ async def tool_download_anime_episode(
         source_used = None
         notes = []
 
-        is_4k = quality_pref.lower() in ("4k", "2160p")
+        is_4k = quality_pref.lower() in ("4k", "2160p", "2160")
+
+        def _is_4k_satisfying(q_str: str) -> bool:
+            q = q_str.lower()
+            return any(k in q for k in ("4k", "2160", "1080", "hq", "10bit", "10-bit", "x265", "hevc"))
 
         # Step 1: For 4K, AnimeDrive is DEFAULT! For other qualities, try AnimeDekho first
         if is_4k and source.lower() in ("animedrive", "auto"):
             try:
                 await status_msg.edit_text(
-                    f"🤖 <b>{name}</b>: Locating 4K UHD stream on AnimeDrive (Default for 4K) for <b>{display_title}</b>...",
+                    f"🤖 <b>{name}</b>: Locating 4K UHD / 1080p HQ stream on AnimeDrive (Default for 4K) for <b>{display_title}</b>...",
                     parse_mode=enums.ParseMode.HTML,
                 )
             except Exception:
@@ -923,13 +927,13 @@ async def tool_download_anime_episode(
             try:
                 from extractors.animedrive import animedrive, is_playable_media_url
                 ad_res = await animedrive.resolve_episode(anime_title, season=season, episode=episode, quality_pref="4K")
-                if ad_res and ad_res.get("url") and is_playable_media_url(ad_res["url"]) and ad_res.get("quality", "").lower() in ("4k", "2160p"):
+                if ad_res and ad_res.get("url") and is_playable_media_url(ad_res["url"]) and _is_4k_satisfying(ad_res.get("quality", "")):
                     stream_url = ad_res["url"]
                     source_used = f"AnimeDrive ({ad_res.get('server', 'Direct')})"
                     if ad_res.get("poster"):
                         poster_url = ad_res["poster"]
                 else:
-                    notes.append("AnimeDrive 4K stream not found")
+                    notes.append("AnimeDrive 4K/HQ stream not found")
             except Exception as e:
                 notes.append(f"AnimeDrive error: {e}")
 
@@ -946,13 +950,13 @@ async def tool_download_anime_episode(
                 try:
                     from extractors.toonflix import toonflix
                     tf_res = await toonflix.resolve_episode(anime_title, season=season, episode=episode, quality_pref="4K")
-                    if tf_res and tf_res.get("url") and tf_res.get("quality", "").lower() in ("4k", "2160p"):
+                    if tf_res and tf_res.get("url") and _is_4k_satisfying(tf_res.get("quality", "")):
                         stream_url = tf_res["url"]
                         source_used = f"ToonFlix ({tf_res.get('server', 'Direct')})"
                         if tf_res.get("poster"):
                             poster_url = tf_res["poster"]
                     else:
-                        notes.append("ToonFlix 4K stream not found")
+                        notes.append("ToonFlix 4K/HQ stream not found")
                 except Exception as e:
                     notes.append(f"ToonFlix error: {e}")
 

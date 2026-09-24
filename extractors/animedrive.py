@@ -261,19 +261,60 @@ class AnimeDriveExtractor:
             log.warning("AnimeDrive: No download buttons found on %s", link_page or target_page_url)
             return None
 
-        # Step 5: Match quality preference
+        # Step 5: Score and rank candidate download buttons
         is_4k = quality_pref.lower() in ("4k", "2160p", "2160")
-        q_clean = quality_pref.lower().replace("p", "")
 
-        hubcloud_candidates: list[tuple[str, str]] = []
-        other_candidates: list[tuple[str, str]] = []
+        def _score_candidate(txt: str, dest_url: str) -> tuple[int, str]:
+            t = txt.lower()
+            is_hub = "hubcloud" in dest_url.lower()
+            h_bonus = 20 if is_hub else 0
 
+            if is_4k:
+                # 4K tier priority:
+                # 1. True 4K / 2160p / UHD
+                # 2. 1080p HQ x265 / HEVC / 10-bit
+                # 3. 1080p HQ
+                # 4. 1080p 10-bit / x265 / bluray / remux
+                # 5. Standard 1080p
+                # 6. 720p HQ / 10-bit
+                # 7. Standard 720p
+                # 8. 480p
+                if any(k in t for k in ("4k", "2160", "uhd")):
+                    return (1000 + h_bonus, "4K")
+                if "1080" in t and "hq" in t and any(k in t for k in ("x265", "hevc", "10bit", "10-bit", "10 bit")):
+                    return (950 + h_bonus, "1080p HQ x265")
+                if "1080" in t and "hq" in t:
+                    return (900 + h_bonus, "1080p HQ")
+                if "1080" in t and any(k in t for k in ("10bit", "10-bit", "10 bit", "x265", "hevc", "bluray", "remux")):
+                    return (860 + h_bonus, "1080p HQ")
+                if "1080" in t:
+                    return (800 + h_bonus, "1080p")
+                if "720" in t and any(k in t for k in ("hq", "10bit", "10-bit", "10 bit", "x265")):
+                    return (600 + h_bonus, "720p HQ")
+                if "720" in t:
+                    return (500 + h_bonus, "720p")
+                if "480" in t:
+                    return (300 + h_bonus, "480p")
+                return (100 + h_bonus, "auto")
+            else:
+                qc = quality_pref.lower().replace("p", "")
+                if qc in t:
+                    return (900 + h_bonus, quality_pref)
+                if "1080" in t:
+                    return (800 + h_bonus if "1080" in qc else 600 + h_bonus, "1080p")
+                if "720" in t:
+                    return (800 + h_bonus if "720" in qc else 500 + h_bonus, "720p")
+                if "480" in t:
+                    return (800 + h_bonus if "480" in qc else 300 + h_bonus, "480p")
+                return (100 + h_bonus, "auto")
+
+        candidates: list[tuple[int, str, str]] = []
         for b in buttons:
             href = b["href"]
             if "/dl/" not in href:
                 continue
 
-            # Check both button text and its parent block text (e.g. "1080p Quality(3.53 GB) || Hub Cloud")
+            # Check both button text and parent block text (e.g. "1080p Quality(3.53 GB) || Hub Cloud")
             parent = b.find_parent(["p", "div", "li", "tr", "h4", "h3", "h2"])
             parent_txt = parent.get_text(" ", strip=True).lower() if parent else ""
             b_txt = (parent_txt + " " + b.get_text(" ", strip=True).lower()).strip()
@@ -282,42 +323,18 @@ class AnimeDriveExtractor:
             if not dest:
                 continue
 
-            quality_matched = "auto"
-            matches_quality = False
-            if is_4k and ("4k" in b_txt or "2160" in b_txt):
-                matches_quality = True
-                quality_matched = "4K"
-            elif q_clean in b_txt:
-                matches_quality = True
-                quality_matched = quality_pref
-            elif "1080" in b_txt:
-                quality_matched = "1080p"
-                if is_4k:
-                    matches_quality = True
-            elif "720" in b_txt:
-                quality_matched = "720p"
-            elif "480" in b_txt:
-                quality_matched = "480p"
+            sc, q_match = _score_candidate(b_txt, dest)
+            candidates.append((sc, dest, q_match))
 
-            if "hubcloud" in dest:
-                if matches_quality:
-                    hubcloud_candidates.insert(0, (dest, quality_matched))
-                else:
-                    hubcloud_candidates.append((dest, quality_matched))
-            else:
-                if matches_quality:
-                    other_candidates.insert(0, (dest, quality_matched))
-                else:
-                    other_candidates.append((dest, quality_matched))
-
-        all_candidates = hubcloud_candidates + other_candidates
+        # Sort candidates descending by quality score
+        candidates.sort(key=lambda x: -x[0])
 
         # Step 6: Resolve candidates to direct playable stream
-        for dest, q_label in all_candidates:
+        for sc, dest, q_label in candidates:
             if "hubcloud" in dest:
                 stream_url = self._resolve_hubcloud(s, dest)
                 if stream_url and is_playable_media_url(stream_url):
-                    log.info("AnimeDrive: Successfully resolved HubCloud direct stream [%s]: %s", q_label, stream_url[:80])
+                    log.info("AnimeDrive: Successfully resolved HubCloud direct stream [%s, score=%d]: %s", q_label, sc, stream_url[:80])
                     return {
                         "url": stream_url,
                         "quality": q_label if q_label != "auto" else quality_pref,
@@ -326,7 +343,7 @@ class AnimeDriveExtractor:
                         "poster": target_poster,
                     }
             elif is_playable_media_url(dest):
-                log.info("AnimeDrive: Direct playable link [%s]: %s", q_label, dest[:80])
+                log.info("AnimeDrive: Direct playable link [%s, score=%d]: %s", q_label, sc, dest[:80])
                 return {
                     "url": dest,
                     "quality": q_label if q_label != "auto" else quality_pref,
