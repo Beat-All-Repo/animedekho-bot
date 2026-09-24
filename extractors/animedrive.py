@@ -56,10 +56,11 @@ def _decode_animedrive_dl(href: str) -> str | None:
 
 
 class AnimeDriveExtractor:
-    """Extracts 4K, 1080p, 720p, 480p anime streams & movies from AnimeDrive (animedrive.me)."""
+    """Extracts 4K, 1080p, 720p, 480p anime streams & movies from AnimeDrive (animedrive.cc / animedrive.me)."""
 
     def __init__(self):
-        self._base_url = "https://animedrive.me"
+        self._base_url = "https://animedrive.cc"
+        self._fallback_url = "https://animedrive.me"
 
     async def search(self, query: str) -> list[dict]:
         """Search AnimeDrive catalog for anime series or movies."""
@@ -74,29 +75,32 @@ class AnimeDriveExtractor:
             query,
         ).strip()
         search_query = clean or query
-        url = f"{self._base_url}/?s={quote_plus(search_query)}"
-        try:
-            r = s.get(url, timeout=15)
-            if r.status_code != 200:
-                log.warning("AnimeDrive search HTTP %d for '%s'", r.status_code, query)
-                return []
-            soup = BeautifulSoup(r.text, "html.parser")
-            results = []
-            for art in soup.find_all("article"):
-                a = art.find("a", href=True)
-                title_el = art.find(["h1", "h2", "h3", "h4"])
-                img = art.find("img")
-                if a and title_el:
-                    title_text = title_el.get_text(strip=True)
-                    results.append({
-                        "title": title_text,
-                        "url": a["href"],
-                        "poster": img.get("src") or img.get("data-src", "") if img else "",
-                    })
-            return results
-        except Exception as e:
-            log.warning("AnimeDrive search failed for '%s': %s", query, e)
-            return []
+
+        for base in [self._base_url, self._fallback_url]:
+            url = f"{base}/?s={quote_plus(search_query)}"
+            try:
+                r = s.get(url, timeout=15)
+                if r.status_code != 200:
+                    continue
+                soup = BeautifulSoup(r.text, "html.parser")
+                results = []
+                for art in soup.find_all("article"):
+                    a = art.find("a", href=True)
+                    title_el = art.find(["h1", "h2", "h3", "h4"])
+                    img = art.find("img")
+                    if a and title_el:
+                        title_text = title_el.get_text(strip=True)
+                        results.append({
+                            "title": title_text,
+                            "url": a["href"],
+                            "poster": img.get("src") or img.get("data-src", "") if img else "",
+                        })
+                if results:
+                    return results
+            except Exception as e:
+                log.warning("AnimeDrive search failed on %s for '%s': %s", base, query, e)
+                continue
+        return []
 
     async def get_series_episodes(self, page_url: str) -> list[dict]:
         """Fetch an AnimeDrive series page and extract available episodes."""
@@ -111,10 +115,10 @@ class AnimeDriveExtractor:
                 return []
             soup = BeautifulSoup(r.text, "html.parser")
 
-            # Look for link to link.animedrive.me
+            # Look for link to link.animedrive.cc or link.animedrive.me
             link_page = None
             for a in soup.find_all("a", href=True):
-                if "link.animedrive.me" in a["href"]:
+                if re.search(r"link\.animedrive\.[a-z]+", a["href"]):
                     link_page = a["href"]
                     break
 
@@ -222,7 +226,7 @@ class AnimeDriveExtractor:
 
         link_page = None
         for a in soup_page.find_all("a", href=True):
-            if "link.animedrive.me" in a["href"]:
+            if re.search(r"link\.animedrive\.[a-z]+", a["href"]):
                 link_page = a["href"]
                 break
 
@@ -264,49 +268,113 @@ class AnimeDriveExtractor:
         # Step 5: Score and rank candidate download buttons
         is_4k = quality_pref.lower() in ("4k", "2160p", "2160")
 
-        def _score_candidate(txt: str, dest_url: str) -> tuple[int, str]:
-            t = txt.lower()
+        def _detect_btn_resolution(b_elem, href: str) -> str:
+            """Detect exact resolution tier from the button itself or query params, avoiding parent contamination."""
+            btn_txt = b_elem.get_text(" ", strip=True).lower()
+            if "?" in href:
+                try:
+                    import urllib.parse
+                    qs = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+                    q_val = qs.get("q", [""])[0].lower()
+                    btn_txt = f"{btn_txt} {q_val}"
+                except Exception:
+                    pass
+
+            # Primary: button's own text or query param
+            if any(k in btn_txt for k in ("4k", "2160", "uhd")):
+                return "4K"
+            if "1080" in btn_txt and "hq" in btn_txt and any(k in btn_txt for k in ("x265", "hevc", "10bit", "10-bit", "10 bit")):
+                return "1080p HQ x265"
+            if "1080" in btn_txt and ("x265" in btn_txt or "hevc" in btn_txt or "10bit" in btn_txt or "10-bit" in btn_txt):
+                return "1080p HQ x265"
+            if "1080" in btn_txt and "hq" in btn_txt:
+                return "1080p HQ"
+            if "1080" in btn_txt:
+                return "1080p"
+            if "720" in btn_txt and ("hq" in btn_txt or "x265" in btn_txt or "10bit" in btn_txt or "10-bit" in btn_txt):
+                return "720p HQ"
+            if "720" in btn_txt:
+                return "720p"
+            if "480" in btn_txt:
+                return "480p"
+            if "360" in btn_txt:
+                return "360p"
+
+            # Fallback to parent element only if button itself was devoid of quality info
+            parent = b_elem.find_parent(["p", "div", "li", "tr", "h4", "h3", "h2"])
+            parent_txt = parent.get_text(" ", strip=True).lower() if parent else ""
+            if any(k in parent_txt for k in ("4k", "2160", "uhd")):
+                return "4K"
+            if "1080" in parent_txt and "hq" in parent_txt:
+                return "1080p HQ"
+            if "1080" in parent_txt:
+                return "1080p"
+            if "720" in parent_txt:
+                return "720p"
+            if "480" in parent_txt:
+                return "480p"
+            return "auto"
+
+        def _score_candidate(q_detected: str, dest_url: str) -> tuple[int, str]:
             is_hub = "hubcloud" in dest_url.lower()
             h_bonus = 20 if is_hub else 0
 
             if is_4k:
-                # 4K tier priority:
-                # 1. True 4K / 2160p / UHD
-                # 2. 1080p HQ x265 / HEVC / 10-bit
-                # 3. 1080p HQ
-                # 4. 1080p 10-bit / x265 / bluray / remux
-                # 5. Standard 1080p
-                # 6. 720p HQ / 10-bit
-                # 7. Standard 720p
-                # 8. 480p
-                if any(k in t for k in ("4k", "2160", "uhd")):
-                    return (1000 + h_bonus, "4K")
-                if "1080" in t and "hq" in t and any(k in t for k in ("x265", "hevc", "10bit", "10-bit", "10 bit")):
-                    return (950 + h_bonus, "1080p HQ x265")
-                if "1080" in t and "hq" in t:
-                    return (900 + h_bonus, "1080p HQ")
-                if "1080" in t and any(k in t for k in ("10bit", "10-bit", "10 bit", "x265", "hevc", "bluray", "remux")):
-                    return (860 + h_bonus, "1080p HQ")
-                if "1080" in t:
-                    return (800 + h_bonus, "1080p")
-                if "720" in t and any(k in t for k in ("hq", "10bit", "10-bit", "10 bit", "x265")):
-                    return (600 + h_bonus, "720p HQ")
-                if "720" in t:
-                    return (500 + h_bonus, "720p")
-                if "480" in t:
-                    return (300 + h_bonus, "480p")
-                return (100 + h_bonus, "auto")
-            else:
-                qc = quality_pref.lower().replace("p", "")
-                if qc in t:
-                    return (900 + h_bonus, quality_pref)
-                if "1080" in t:
-                    return (800 + h_bonus if "1080" in qc else 600 + h_bonus, "1080p")
-                if "720" in t:
-                    return (800 + h_bonus if "720" in qc else 500 + h_bonus, "720p")
-                if "480" in t:
-                    return (800 + h_bonus if "480" in qc else 300 + h_bonus, "480p")
-                return (100 + h_bonus, "auto")
+                # 4K tier priority: True 4K -> 1080p HQ x265 -> 1080p HQ -> 1080p -> 720p -> 480p
+                rankings = {
+                    "4K": 1000,
+                    "1080p HQ x265": 950,
+                    "1080p HQ": 900,
+                    "1080p": 800,
+                    "720p HQ": 600,
+                    "720p": 500,
+                    "480p": 300,
+                    "auto": 100,
+                }
+                return (rankings.get(q_detected, 100) + h_bonus, q_detected)
+
+            clean_pref = quality_pref.lower().replace("p", "")
+            if clean_pref == "480":
+                # Strict 480p requested: 480p is priority 1000; never prioritize heavy 1080p files
+                rankings = {
+                    "480p": 1000,
+                    "360p": 700,
+                    "720p": 500,
+                    "720p HQ": 450,
+                    "1080p": 300,
+                    "1080p HQ": 250,
+                    "1080p HQ x265": 200,
+                    "4K": 100,
+                    "auto": 200,
+                }
+                return (rankings.get(q_detected, 200) + h_bonus, q_detected)
+
+            if clean_pref == "720":
+                rankings = {
+                    "720p": 1000,
+                    "720p HQ": 980,
+                    "1080p": 700,
+                    "480p": 600,
+                    "1080p HQ": 500,
+                    "1080p HQ x265": 450,
+                    "4K": 300,
+                    "auto": 200,
+                }
+                return (rankings.get(q_detected, 200) + h_bonus, q_detected)
+
+            if clean_pref == "1080":
+                rankings = {
+                    "1080p": 1000,
+                    "1080p HQ": 980,
+                    "1080p HQ x265": 950,
+                    "4K": 800,
+                    "720p": 600,
+                    "480p": 300,
+                    "auto": 200,
+                }
+                return (rankings.get(q_detected, 200) + h_bonus, q_detected)
+
+            return (500 + h_bonus, q_detected)
 
         candidates: list[tuple[int, str, str]] = []
         for b in buttons:
@@ -314,16 +382,12 @@ class AnimeDriveExtractor:
             if "/dl/" not in href:
                 continue
 
-            # Check both button text and parent block text (e.g. "1080p Quality(3.53 GB) || Hub Cloud")
-            parent = b.find_parent(["p", "div", "li", "tr", "h4", "h3", "h2"])
-            parent_txt = parent.get_text(" ", strip=True).lower() if parent else ""
-            b_txt = (parent_txt + " " + b.get_text(" ", strip=True).lower()).strip()
-
             dest = _decode_animedrive_dl(href)
             if not dest:
                 continue
 
-            sc, q_match = _score_candidate(b_txt, dest)
+            q_detected = _detect_btn_resolution(b, href)
+            sc, q_match = _score_candidate(q_detected, dest)
             candidates.append((sc, dest, q_match))
 
         # Sort candidates descending by quality score
@@ -379,19 +443,24 @@ class AnimeDriveExtractor:
                 return None
             soup2 = BeautifulSoup(r2.text, "html.parser")
 
+            # Fast-path: Pre-signed direct cloud storage links (Cloudflare R2, Google Cloud Storage)
+            # These deliver direct, full-speed downloads and don't require further resolution.
+            for a in soup2.find_all("a", href=True):
+                h = a["href"]
+                if not h.startswith("http"):
+                    continue
+                if any(x in h for x in ("cloudflarestorage.com", "storage.googleapis.com", "googleusercontent.com")):
+                    log.info("AnimeDrive: Resolved direct HubCloud cloud storage link: %s", h[:80])
+                    return h
+
             candidates = []
             for a in soup2.find_all("a", href=True):
                 h = a["href"]
                 if not h.startswith("http"):
                     continue
-                # Prioritize ZipDisk (storage.googleapis.com) which has verified HTTP 200 OK delivery
-                if "storage.googleapis.com" in h:
-                    candidates.insert(0, h)
-                elif "cloudflarestorage.com" in h:
-                    candidates.append(h)
-                elif "pixeldrain.dev/u/" in h:
+                if "pixeldrain.dev/u/" in h:
                     candidates.append(h.replace("/u/", "/api/file/"))
-                elif any(x in h for x in ("googleusercontent.com", "workers.dev", "dl.php")):
+                elif any(x in h for x in ("workers.dev", "dl.php", "gpdl.hubcloud")):
                     candidates.append(h)
 
             # Test candidates to find verified live working download

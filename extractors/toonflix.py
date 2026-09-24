@@ -160,45 +160,89 @@ class ToonflixExtractor:
         # Step 5: Score and rank quality cards (4K/2160p, 1080p HQ, 1080p, 720p, 480p)
         is_4k_request = quality_pref.lower() in ("4k", "2160p", "2160")
 
-        def _score_toonflix_card(card_str: str) -> tuple[int, str]:
-            t = card_str.lower()
+        def _detect_toonflix_card_res(card) -> str:
+            c_text = card.get_text(" ", strip=True).lower()
+            c_class = " ".join(card.get("class", [])).lower()
+            combined = f"{c_text} {c_class}"
+
+            if any(k in combined for k in ("4k", "2160", "s2160", "uhd")):
+                return "4K"
+            if "1080" in combined and "hq" in combined and any(k in combined for k in ("x265", "hevc", "10bit", "10-bit")):
+                return "1080p HQ x265"
+            if "s1080hq" in combined or ("1080" in combined and "hq" in combined):
+                return "1080p HQ"
+            if "1080" in combined or "s1080" in combined:
+                return "1080p"
+            if "720" in combined and ("hq" in combined or "10bit" in combined):
+                return "720p HQ"
+            if "720" in combined or "s720" in combined:
+                return "720p"
+            if "480" in combined or "s480" in combined:
+                return "480p"
+            return "auto"
+
+        def _score_toonflix_card(q_detected: str) -> tuple[int, str]:
             if is_4k_request:
-                if any(k in t for k in ("4k", "2160", "uhd", "s2160")):
-                    return (1000, "4K")
-                if "1080" in t and "hq" in t and any(k in t for k in ("x265", "hevc", "10bit", "10-bit", "60fps")):
-                    return (950, "1080p HQ x265")
-                if "1080" in t and ("hq" in t or "s1080hq" in t):
-                    return (900, "1080p HQ")
-                if "1080" in t and any(k in t for k in ("10bit", "10-bit", "x265", "hevc", "fhd")):
-                    return (860, "1080p HQ")
-                if "1080" in t or "s1080" in t:
-                    return (800, "1080p")
-                if "720" in t and any(k in t for k in ("hq", "10bit", "10-bit")):
-                    return (600, "720p HQ")
-                if "720" in t or "s720" in t:
-                    return (500, "720p")
-                if "480" in t or "s480" in t:
-                    return (300, "480p")
-                return (100, "auto")
-            else:
-                qc = quality_pref.lower().replace("p", "")
-                if qc in t:
-                    return (900, quality_pref)
-                if "1080" in t or "s1080" in t:
-                    return (800 if "1080" in qc else 600, "1080p")
-                if "720" in t or "s720" in t:
-                    return (800 if "720" in qc else 500, "720p")
-                if "480" in t or "s480" in t:
-                    return (800 if "480" in qc else 400, "480p")
-                return (100, "auto")
+                rankings = {
+                    "4K": 1000,
+                    "1080p HQ x265": 950,
+                    "1080p HQ": 900,
+                    "1080p": 800,
+                    "720p HQ": 600,
+                    "720p": 500,
+                    "480p": 300,
+                    "auto": 100,
+                }
+                return (rankings.get(q_detected, 100), q_detected)
+
+            clean_pref = quality_pref.lower().replace("p", "")
+            if clean_pref == "480":
+                rankings = {
+                    "480p": 1000,
+                    "720p": 500,
+                    "720p HQ": 450,
+                    "1080p": 300,
+                    "1080p HQ": 250,
+                    "1080p HQ x265": 200,
+                    "4K": 100,
+                    "auto": 200,
+                }
+                return (rankings.get(q_detected, 200), q_detected)
+
+            if clean_pref == "720":
+                rankings = {
+                    "720p": 1000,
+                    "720p HQ": 980,
+                    "1080p": 700,
+                    "480p": 600,
+                    "1080p HQ": 500,
+                    "1080p HQ x265": 450,
+                    "4K": 300,
+                    "auto": 200,
+                }
+                return (rankings.get(q_detected, 200), q_detected)
+
+            if clean_pref == "1080":
+                rankings = {
+                    "1080p": 1000,
+                    "1080p HQ": 980,
+                    "1080p HQ x265": 950,
+                    "4K": 800,
+                    "720p": 600,
+                    "480p": 300,
+                    "auto": 200,
+                }
+                return (rankings.get(q_detected, 200), q_detected)
+
+            return (500, q_detected)
 
         card_candidates: list[tuple[int, str, str]] = []
         cards = soup_drive.find_all(class_=re.compile(r"quality-card|card"))
         for card in cards:
             m = re.search(r"handleLinkClick\('([^']+)',\s*'download'\)", str(card))
             if m:
-                card_str = f"{card.get_text()} {card.get('class', '')} {str(card)}"
-                sc, q_name = _score_toonflix_card(card_str)
+                q_detected = _detect_toonflix_card_res(card)
+                sc, q_name = _score_toonflix_card(q_detected)
                 card_candidates.append((sc, m.group(1), q_name))
 
         card_candidates.sort(key=lambda x: -x[0])

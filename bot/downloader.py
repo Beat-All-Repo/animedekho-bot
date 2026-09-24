@@ -172,8 +172,10 @@ def _get_origin(url: str) -> str:
         return "https://animedekho.app"
     if "megacloud" in domain or "rabbit" in domain or "dokicloud" in domain:
         return "https://megacloud.tv"
-    elif "vmeas" in domain or "vidmoly" in domain or "vmbox" in domain:
+    elif "vmeas" in domain or "vidmoly" in domain or "vmbox" in domain or "vmpx" in domain:
         return "https://vidmoly.to"
+    elif "as-cdn" in domain or "fireplayer" in domain:
+        return f"https://{domain}"
     elif "turboviplay" in domain or "turbosplayer" in domain or "emturbovid" in domain:
         return "https://emturbovid.com"
     elif "xerver" in domain or "vidsrc" in domain or "googleusercontent" in domain:
@@ -311,7 +313,7 @@ async def n_m3u8dl_re_download(
         ]
 
         if select_res and height:
-            cmd.extend(["--select-video", f'res=".*{height}.*":for=best'])
+            cmd.extend(["--select-video", f"res=.*{height}.*:for=best"])
         else:
             cmd.extend(["--auto-select"])
 
@@ -419,13 +421,21 @@ async def n_m3u8dl_re_download(
         return os.path.exists(output_path) and os.path.getsize(output_path) > 0
 
     try:
-        # Step 1: Run on stream_url with resolution filter
+        # Step 1: If variant_url is given and different from master stream_url, try auto-select on variant directly
+        if variant_url and variant_url != stream_url:
+            log.info("N_m3u8DL-RE downloading targeted variant directly: %s", variant_url[:80])
+            success = await _run_dl(variant_url, select_res=False)
+            if success:
+                log.info("N_m3u8DL-RE variant download complete: %s (%s)", output_path, _format_size(os.path.getsize(output_path)))
+                return True
+
+        # Step 2: Run on stream_url with resolution filter
         success = await _run_dl(stream_url, select_res=bool(height))
         if success:
             log.info("N_m3u8DL-RE download complete: %s (%s)", output_path, _format_size(os.path.getsize(output_path)))
             return True
 
-        # Step 2: Retry with auto-select on variant_url (or stream_url) if select_res failed
+        # Step 3: Retry with auto-select on variant_url (or stream_url) if select_res failed
         target = variant_url or stream_url
         log.info("N_m3u8DL-RE retrying with --auto-select on %s", target[:80])
         success = await _run_dl(target, select_res=False)
@@ -460,7 +470,7 @@ async def ffmpeg_download(
     cmd = ["ffmpeg", "-y"]
     headers = f"Referer: {origin}/\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\n"
     cmd.extend(["-headers", headers])
-    cmd.extend(["-i", stream_url, "-map", "0", "-c", "copy", "-bsf:a", "aac_adtstoasc", output_path])
+    cmd.extend(["-i", stream_url, "-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-bsf:a", "aac_adtstoasc", output_path])
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -552,7 +562,7 @@ async def download_media(
         if ok:
             return True
         log.warning("Direct HTTP download failed, falling back to FFmpeg")
-        return await ffmpeg_download(stream_url, output_path, progress_msg, title, quality)
+        return await ffmpeg_download(stream_url, output_path, progress_msg, title, quality, referer=referer)
 
     # M3U8 stream
     if shutil.which("N_m3u8DL-RE"):
@@ -563,9 +573,9 @@ async def download_media(
 
     # Fallback to FFmpeg on stream_url or variant_url
     target_url = variant_url or stream_url
-    ok = await ffmpeg_download(target_url, output_path, progress_msg, title, quality)
+    ok = await ffmpeg_download(target_url, output_path, progress_msg, title, quality, referer=referer)
     if not ok and variant_url and variant_url != stream_url:
-        ok = await ffmpeg_download(stream_url, output_path, progress_msg, title, quality)
+        ok = await ffmpeg_download(stream_url, output_path, progress_msg, title, quality, referer=referer)
 
     return ok
 
