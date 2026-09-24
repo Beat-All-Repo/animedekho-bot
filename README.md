@@ -249,7 +249,7 @@ docker compose up -d --build    # Rebuild & start
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/jrodr254/animedekho-bot.git
+git clone https://github.com/Tgbotworld/animedekho-bot.git
 cd animedekho-bot
 
 # 2. Install dependencies
