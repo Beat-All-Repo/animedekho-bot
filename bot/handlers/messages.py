@@ -21,6 +21,18 @@ async def handle_text(client: Client, message: Message):
         return
 
     user = message.from_user
+
+    # Check if user is in userbot login wizard
+    from bot.userbot import userbot_manager
+    if userbot_manager and user and userbot_manager.is_in_login(user.id):
+        reply_text, is_finished = await userbot_manager.handle_login_step(user.id, query)
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await message.reply_text(reply_text, parse_mode=enums.ParseMode.HTML)
+        return
+
     msg = await message.reply_text("🔍 Searching...")
 
     # Log the search

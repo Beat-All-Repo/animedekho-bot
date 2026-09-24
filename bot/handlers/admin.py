@@ -502,3 +502,310 @@ async def _refresh_album(db, library_manager, series_slug: str):
                     file_id=sample["file_id"],
                     file_unique_id=sample["file_unique_id"],
                 )
+
+
+# ── Userbot & Channel Mapping Commands ──────────────────────────
+
+
+@require_owner
+async def cmd_login(client: Client, message: Message):
+    """
+    Login userbot session.
+    Usage:
+      /login - Start interactive phone login wizard
+      /login <string_session> - Direct login with Pyrogram string session
+    """
+    from bot.userbot import userbot_manager
+    if not userbot_manager:
+        await message.reply_text("⚠️ Userbot Manager not initialized.")
+        return
+
+    args = _parse_args(message)
+    if args:
+        session_str = args[0].strip()
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        status_msg = await message.reply_text("🔄 Validating and connecting string session...")
+        ok, text, _ = await userbot_manager.login_with_session(session_str, message.from_user.id)
+        if ok:
+            await status_msg.edit_text(text, parse_mode=enums.ParseMode.HTML)
+        else:
+            await status_msg.edit_text(f"❌ <b>Login Failed:</b> {text}", parse_mode=enums.ParseMode.HTML)
+    else:
+        prompt = await userbot_manager.start_interactive_login(message.from_user.id)
+        await message.reply_text(prompt, parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_logout(client: Client, message: Message):
+    """Logout userbot and clear session from database."""
+    from bot.userbot import userbot_manager
+    if not userbot_manager or not userbot_manager.is_active:
+        await message.reply_text("ℹ️ Userbot is not currently logged in.")
+        return
+
+    await userbot_manager.logout()
+    await message.reply_text("✅ <b>Userbot logged out</b> and session deleted from database.", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_userbot(client: Client, message: Message):
+    """Show current userbot session status."""
+    from bot.userbot import userbot_manager
+    from bot.database import db
+
+    if not userbot_manager:
+        await message.reply_text("⚠️ Userbot Manager not initialized.")
+        return
+
+    st = userbot_manager.get_status()
+    is_active = st["is_active"]
+
+    auto_chan = False
+    album_mode = "channel"
+    channel_count = 0
+    if db:
+        auto_chan = await db.get_config("auto_channel_creation", default=False)
+        album_mode = await db.get_config("album_mode", default="channel")
+        channels = await db.list_channel_mappings()
+        channel_count = len(channels)
+
+    if is_active:
+        status_text = "🟢 <b>Connected</b>"
+        user_info = (
+            f"👤 <b>Name:</b> {st['name']}\n"
+            f"🔗 <b>Username:</b> @{st['username'] or 'None'}\n"
+            f"🆔 <b>User ID:</b> <code>{st['user_id']}</code>\n"
+        )
+    else:
+        status_text = "🔴 <b>Disconnected</b>"
+        user_info = "<i>Run /login to connect a userbot session.</i>\n"
+
+    msg = (
+        f"🤖 <b>Userbot Status</b>\n"
+        f"⟐━━━━━━━━━━━━━━━━━⟐\n"
+        f"⚡ <b>State:</b> {status_text}\n"
+        f"{user_info}"
+        f"📁 <b>Mapped Channels:</b> {channel_count}\n"
+        f"⚙️ <b>Auto Channel Creation:</b> {'✅ Enabled' if auto_chan else '❌ Disabled'}\n"
+        f"🖼️ <b>Album Mode:</b> <code>{album_mode}</code>\n"
+        f"⟐━━━━━━━━━━━━━━━━━⟐\n"
+        f"<b>Commands:</b>\n"
+        f"• /login - Connect userbot\n"
+        f"• /logout - Disconnect userbot\n"
+        f"• /autochannel &lt;on|off&gt; - Toggle auto channel creation\n"
+        f"• /albummode &lt;channel|both|direct&gt; - Set poster album mode\n"
+        f"• /channels - List mapped channels\n"
+        f"• /createchannel &lt;slug&gt; - Create channel for series\n"
+        f"• /mapchannel &lt;slug&gt; &lt;channel_id&gt; [link] - Map channel"
+    )
+    await message.reply_text(msg, parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_cancel(client: Client, message: Message):
+    """Cancel active userbot login wizard."""
+    from bot.userbot import userbot_manager
+    if userbot_manager and userbot_manager.is_in_login(message.from_user.id):
+        await userbot_manager.cancel_login(message.from_user.id)
+        await message.reply_text("❌ Login cancelled.")
+    else:
+        await message.reply_text("ℹ️ No active login wizard.")
+
+
+@require_owner
+async def cmd_autochannel(client: Client, message: Message):
+    """Toggle auto-channel creation."""
+    from bot.database import db
+    args = _parse_args(message)
+    if not args or args[0].lower() not in ("on", "off", "enable", "disable"):
+        await message.reply_text("Usage: /autochannel <on|off>")
+        return
+
+    enabled = args[0].lower() in ("on", "enable")
+    if db:
+        await db.set_config("auto_channel_creation", enabled)
+    await message.reply_text(
+        f"✅ <b>Auto Channel Creation:</b> {'Enabled' if enabled else 'Disabled'}\n"
+        f"When enabled, downloading a series will automatically create a dedicated channel.",
+        parse_mode=enums.ParseMode.HTML
+    )
+
+
+@require_owner
+async def cmd_albummode(client: Client, message: Message):
+    """Configure poster album display mode."""
+    from bot.database import db
+    args = _parse_args(message)
+    valid_modes = ("channel", "both", "direct")
+    if not args or args[0].lower() not in valid_modes:
+        await message.reply_text(
+            "Usage: /albummode <channel|both|direct>\n\n"
+            "• <code>channel</code>: Main channel poster has direct button to the dedicated series channel\n"
+            "• <code>both</code>: Main channel poster has channel button + direct download buttons\n"
+            "• <code>direct</code>: Main channel poster has only direct download buttons",
+            parse_mode=enums.ParseMode.HTML
+        )
+        return
+
+    mode = args[0].lower()
+    if db:
+        await db.set_config("album_mode", mode)
+    await message.reply_text(
+        f"✅ <b>Poster Album Mode set to:</b> <code>{mode}</code>",
+        parse_mode=enums.ParseMode.HTML
+    )
+
+
+@require_owner
+async def cmd_createchannel(client: Client, message: Message):
+    """Manually create and map a dedicated channel for an anime series."""
+    from bot.userbot import userbot_manager
+    from api.client import api
+
+    if not userbot_manager or not userbot_manager.is_active:
+        await message.reply_text("❌ Userbot is not connected. Use /login first.")
+        return
+
+    args = _parse_args(message)
+    if not args:
+        await message.reply_text("Usage: /createchannel <series_slug or search query>\nExample: /createchannel solo-leveling-hindi")
+        return
+
+    query = " ".join(args).strip()
+    wait_msg = await message.reply_text(f"🔍 Looking up anime series for: <code>{query}</code>...", parse_mode=enums.ParseMode.HTML)
+
+    slug = query
+    series_title = query
+    poster_url = None
+
+    try:
+        series = await api.get_series(slug)
+        if series:
+            series_title = series.title
+            poster_url = series.poster
+    except Exception:
+        try:
+            results = await api.search(query)
+            if results:
+                match = results[0]
+                slug = match.slug
+                series_title = match.title
+                poster_url = match.poster
+        except Exception as se:
+            log.warning("Search failed in createchannel: %s", se)
+
+    await wait_msg.edit_text(f"🔨 Creating channel for <b>{series_title}</b>...", parse_mode=enums.ParseMode.HTML)
+
+    try:
+        mapping = await userbot_manager.create_anime_channel(
+            series_title=series_title,
+            series_slug=slug,
+            poster_url=poster_url,
+        )
+        await wait_msg.edit_text(
+            f"🎉 <b>Dedicated Channel Created & Mapped!</b>\n\n"
+            f"📺 <b>Series:</b> {mapping.get('series_title', series_title)}\n"
+            f"🆔 <b>Channel ID:</b> <code>{mapping['channel_id']}</code>\n"
+            f"🔗 <b>Invite Link:</b> {mapping.get('invite_link')}\n"
+            f"🏷️ <b>Slug:</b> <code>{slug}</code>",
+            parse_mode=enums.ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        log.exception("cmd_createchannel failed")
+        await wait_msg.edit_text(f"❌ <b>Channel creation failed:</b> {e}", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_mapchannel(client: Client, message: Message):
+    """Manually map an existing Telegram channel to an anime series slug."""
+    from bot.database import db
+    args = _parse_args(message)
+    if len(args) < 2:
+        await message.reply_text(
+            "Usage: /mapchannel <series_slug> <channel_id> [invite_link]\n\n"
+            "Example: /mapchannel solo-leveling-hindi -100123456789 https://t.me/+AbCdEf"
+        )
+        return
+
+    slug = args[0].strip()
+    try:
+        channel_id = int(args[1].strip())
+    except ValueError:
+        await message.reply_text("❌ Channel ID must be an integer (e.g. -100123456789).")
+        return
+
+    invite_link = args[2].strip() if len(args) > 2 else ""
+
+    if not db:
+        await message.reply_text("⚠️ Database not available.")
+        return
+
+    mapping = await db.set_channel_mapping(
+        series_slug=slug,
+        channel_id=channel_id,
+        invite_link=invite_link,
+        series_title=slug,
+        auto_created=False,
+        created_by=message.from_user.id,
+    )
+
+    await message.reply_text(
+        f"✅ <b>Channel Mapped!</b>\n\n"
+        f"🏷️ <b>Slug:</b> <code>{slug}</code>\n"
+        f"🆔 <b>Channel ID:</b> <code>{channel_id}</code>\n"
+        f"🔗 <b>Invite Link:</b> {invite_link or 'None'}",
+        parse_mode=enums.ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
+@require_owner
+async def cmd_unmapchannel(client: Client, message: Message):
+    """Remove channel mapping for a series slug."""
+    from bot.database import db
+    args = _parse_args(message)
+    if not args:
+        await message.reply_text("Usage: /unmapchannel <series_slug>")
+        return
+
+    slug = args[0].strip()
+    if not db:
+        await message.reply_text("⚠️ Database not available.")
+        return
+
+    deleted = await db.delete_channel_mapping(slug)
+    if deleted:
+        await message.reply_text(f"✅ Removed channel mapping for <code>{slug}</code>.", parse_mode=enums.ParseMode.HTML)
+    else:
+        await message.reply_text(f"ℹ️ No channel mapping found for <code>{slug}</code>.", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_channels(client: Client, message: Message):
+    """List all mapped channels."""
+    from bot.database import db
+    if not db:
+        await message.reply_text("⚠️ Database not available.")
+        return
+
+    channels = await db.list_channel_mappings()
+    if not channels:
+        await message.reply_text("📂 <b>No mapped channels found.</b>\nUse /createchannel or /mapchannel to add channels.", parse_mode=enums.ParseMode.HTML)
+        return
+
+    lines = []
+    for c in channels:
+        title = c.get("series_title") or c.get("series_slug")
+        cid = c.get("channel_id")
+        link = c.get("invite_link")
+        link_str = f"<a href='{link}'>Link</a>" if link else "No link"
+        lines.append(f"• <b>{title}</b>\n  ID: <code>{cid}</code> | {link_str} | Slug: <code>{c.get('series_slug')}</code>")
+
+    text = f"📋 <b>Mapped Series Channels ({len(channels)}):</b>\n\n" + "\n\n".join(lines)
+    if len(text) > 4000:
+        text = text[:4000] + "\n..."
+    await message.reply_text(text, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)

@@ -23,6 +23,7 @@ class Database:
         self.ai_history = self.db["ai_history"]
         self.ai_facts = self.db["ai_facts"]
         self.child_bots = self.db["child_bots"]
+        self.channel_mappings = self.db["channel_mappings"]
 
     async def init_indexes(self):
         """Create necessary indexes."""
@@ -42,6 +43,8 @@ class Database:
         await self.ai_facts.create_index([("chat_id", 1), ("key", 1)], unique=True)
         await self.child_bots.create_index("bot_id", unique=True)
         await self.child_bots.create_index("username")
+        await self.channel_mappings.create_index("series_slug", unique=True)
+        await self.channel_mappings.create_index("channel_id")
         log.info("MongoDB indexes created")
 
     # ── User management ───────────────────────────────────────────
@@ -444,6 +447,97 @@ class Database:
             )
         except Exception:
             pass
+
+    # ── Channel Mappings & Userbot Session ──────────────────────────
+
+    async def get_channel_mapping(self, series_slug: str) -> dict | None:
+        """Get mapped channel information for a series slug."""
+        try:
+            return await self.channel_mappings.find_one({"series_slug": series_slug})
+        except Exception as e:
+            log.warning("Failed to get channel mapping for %s: %s", series_slug, e)
+            return None
+
+    async def set_channel_mapping(
+        self,
+        series_slug: str,
+        channel_id: int,
+        invite_link: str,
+        series_title: str = "",
+        poster_url: str = "",
+        auto_created: bool = False,
+        created_by: int = 0,
+    ) -> dict:
+        """Upsert a channel mapping for an anime series."""
+        now = datetime.now(timezone.utc).isoformat()
+        doc = {
+            "series_slug": series_slug,
+            "series_title": series_title or series_slug,
+            "channel_id": channel_id,
+            "invite_link": invite_link,
+            "poster_url": poster_url,
+            "auto_created": auto_created,
+            "created_by": created_by,
+            "updated_at": now,
+        }
+        await self.channel_mappings.update_one(
+            {"series_slug": series_slug},
+            {
+                "$set": doc,
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
+        )
+        return doc
+
+    async def list_channel_mappings(self) -> list[dict]:
+        """List all mapped channels."""
+        try:
+            cursor = self.channel_mappings.find().sort("series_title", 1)
+            return await cursor.to_list(length=500)
+        except Exception as e:
+            log.warning("Failed to list channel mappings: %s", e)
+            return []
+
+    async def delete_channel_mapping(self, series_slug: str) -> bool:
+        """Remove a channel mapping."""
+        try:
+            res = await self.channel_mappings.delete_one({"series_slug": series_slug})
+            return res.deleted_count > 0
+        except Exception as e:
+            log.warning("Failed to delete channel mapping for %s: %s", series_slug, e)
+            return False
+
+    async def get_userbot_session(self) -> dict | None:
+        """Retrieve stored userbot session."""
+        try:
+            return await self.get_config("userbot_session")
+        except Exception as e:
+            log.warning("Failed to retrieve userbot session: %s", e)
+            return None
+
+    async def save_userbot_session(self, session_string: str, user_data: dict | None = None) -> bool:
+        """Store userbot string session and user metadata."""
+        try:
+            data = {
+                "session_string": session_string,
+                "user": user_data or {},
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await self.set_config("userbot_session", data)
+            return True
+        except Exception as e:
+            log.warning("Failed to save userbot session: %s", e)
+            return False
+
+    async def delete_userbot_session(self) -> bool:
+        """Delete stored userbot session."""
+        try:
+            await self.config.delete_one({"_id": "userbot_session"})
+            return True
+        except Exception as e:
+            log.warning("Failed to delete userbot session: %s", e)
+            return False
 
     def close(self):
         """Close the MongoDB connection."""

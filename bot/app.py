@@ -98,6 +98,14 @@ async def _on_start(client: Client):
     child_mod.child_bot_manager = child_mgr
     log.info("Child Bot Manager initialized")
 
+    # Init Userbot Manager
+    from bot.userbot import UserbotManager
+    import bot.userbot as userbot_mod
+    ub_mgr = UserbotManager(main_client=client)
+    await ub_mgr.start()
+    userbot_mod.userbot_manager = ub_mgr
+    log.info("Userbot Manager initialized")
+
     # Set bot commands menu
     from pyrogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
     try:
@@ -126,6 +134,13 @@ async def _on_start(client: Client):
                 BotCommand("bots", "List child worker bots"),
                 BotCommand("setbotquality", "Set child bot quality tier"),
                 BotCommand("refreshalbums", "Refresh channel album buttons"),
+                BotCommand("login", "Login userbot session"),
+                BotCommand("logout", "Logout userbot session"),
+                BotCommand("userbot", "Userbot status & options"),
+                BotCommand("autochannel", "Toggle auto channel creation"),
+                BotCommand("albummode", "Configure album display mode"),
+                BotCommand("channels", "List mapped anime channels"),
+                BotCommand("createchannel", "Create channel for anime"),
             ], scope=BotCommandScopeChat(settings.bot.owner_id))
         log.info("Bot commands menu set successfully")
     except Exception as e:
@@ -134,6 +149,9 @@ async def _on_start(client: Client):
 
 async def _on_stop(client: Client):
     """Called on shutdown — cleanup."""
+    from bot.userbot import userbot_manager
+    if userbot_manager:
+        await userbot_manager.stop()
     from bot.child_bots import child_bot_manager
     if child_bot_manager:
         await child_bot_manager.stop()
@@ -142,7 +160,7 @@ async def _on_stop(client: Client):
     from bot.database import db
     if db:
         db.close()
-    log.info("HTTP client, Child Bots & MongoDB closed")
+    log.info("HTTP client, Userbot, Child Bots & MongoDB closed")
 
 
 def create_app() -> Client:

@@ -657,12 +657,38 @@ async def _handle_batch_download(client: Client, q: CallbackQuery, slug: str, se
     )
 
 
+async def _resolve_destination_channel(series_slug: str, series_title: str = "", poster_url: str = "") -> int | None:
+    """Check if series has a mapped channel or auto-create one if enabled."""
+    from bot.database import db
+    if not db or not series_slug:
+        return None
+    try:
+        mapping = await db.get_channel_mapping(series_slug)
+        if not mapping:
+            auto_chan = await db.get_config("auto_channel_creation", default=False)
+            from bot.userbot import userbot_manager
+            if auto_chan and userbot_manager and userbot_manager.is_active:
+                mapping = await userbot_manager.create_anime_channel(
+                    series_title=series_title or series_slug,
+                    series_slug=series_slug,
+                    poster_url=poster_url,
+                )
+        if mapping and mapping.get("channel_id"):
+            return mapping["channel_id"]
+    except Exception as e:
+        log.warning("Failed resolving destination channel for %s: %s", series_slug, e)
+    return None
+
+
 async def _do_batch_download(client: Client, chat_id, series, season, episodes, quality_pref, progress_msg, user):
     """Execute batch download sequentially with multi-server fallback."""
     total = len(episodes)
     completed = 0
     skipped = 0  # Episodes served from cache
     sent_messages = [progress_msg]  # Track all messages for auto-delete
+
+    # Check or auto-create dedicated series channel if userbot/mapping enabled
+    dest_channel_id = await _resolve_destination_channel(series.slug, series.title, series.poster or "")
 
     for i, ep in enumerate(episodes, 1):
         try:
@@ -730,6 +756,7 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                             ep_msg, client,
                             referer=ad_res.get("referer", "https://hubcloud.ist/"),
                             poster_url=series.poster or ad_res.get("poster", ""),
+                            destination_channel_id=dest_channel_id,
                         )
                 except Exception as e:
                     log.warning("Batch AnimeDrive 4K error for ep %s: %s", ep.slug, e)
@@ -749,6 +776,7 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                                 ep_msg, client,
                                 referer=tf_res.get("referer", "https://drive.toonflix.in/"),
                                 poster_url=series.poster or tf_res.get("poster", ""),
+                                destination_channel_id=dest_channel_id,
                             )
                     except Exception as e:
                         log.warning("Batch ToonFlix 4K error for ep %s: %s", ep.slug, e)
@@ -767,6 +795,7 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                                 f"{series.title} S{season}E{ep.number}",
                                 ep_msg, client, variant_url=quality.url,
                                 poster_url=series.poster or "",
+                                destination_channel_id=dest_channel_id,
                             )
                             if success:
                                 break
@@ -786,6 +815,7 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                             f"{series.title} S{season}E{ep.number}",
                             ep_msg, client, variant_url=quality.url,
                             poster_url=series.poster or "",
+                            destination_channel_id=dest_channel_id,
                         )
                         if success:
                             break
@@ -805,6 +835,7 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                                 ep_msg, client,
                                 referer=ad_res.get("referer", "https://hubcloud.ist/"),
                                 poster_url=series.poster or ad_res.get("poster", ""),
+                                destination_channel_id=dest_channel_id,
                             )
                     except Exception as e:
                         log.warning("Batch AnimeDrive fallback failed for ep %s: %s", ep.slug, e)
@@ -824,6 +855,7 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                                 ep_msg, client,
                                 referer=tf_res.get("referer", "https://drive.toonflix.in/"),
                                 poster_url=series.poster or tf_res.get("poster", ""),
+                                destination_channel_id=dest_channel_id,
                             )
                     except Exception as e:
                         log.warning("Batch ToonFlix fallback failed for ep %s: %s", ep.slug, e)
@@ -935,6 +967,9 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
         sent_msg = None
         chosen_quality = candidates[0][1]
 
+        lookup_title = slug_to_title(series_slug) if series_slug else title
+        dest_channel_id = await _resolve_destination_channel(series_slug, lookup_title, poster_url or "")
+
         for attempt, (srv, quality) in enumerate(candidates, 1):
             chosen_quality = quality
             if attempt > 1:
@@ -953,6 +988,7 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
                 variant_url=quality.url,
                 referer=ref,
                 poster_url=poster_url or "",
+                destination_channel_id=dest_channel_id,
             )
             if success:
                 break
@@ -966,8 +1002,6 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
                 if ep_m:
                     s_num = int(ep_m.group(1))
                     ep_num = int(ep_m.group(2))
-
-            lookup_title = slug_to_title(series_slug) if series_slug else title
 
             # Step 1: Secondary fallback to AnimeDrive (if not already tried)
             if not any("AnimeDrive" in s.name for s, _ in candidates):
@@ -987,6 +1021,7 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
                             chat_id, ad_res["url"], ad_res["quality"], filename, title, progress_msg, client,
                             referer=ad_res.get("referer", "https://hubcloud.ist/"),
                             poster_url=poster_url or "",
+                            destination_channel_id=dest_channel_id,
                         )
                         if success:
                             from api.models import Quality
@@ -1012,6 +1047,7 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
                             chat_id, tf_res["url"], tf_res["quality"], filename, title, progress_msg, client,
                             referer=tf_res.get("referer", "https://drive.toonflix.in/"),
                             poster_url=poster_url or "",
+                            destination_channel_id=dest_channel_id,
                         )
                         if success:
                             from api.models import Quality

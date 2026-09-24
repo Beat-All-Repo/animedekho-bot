@@ -144,13 +144,19 @@ class LibraryManager:
         sorted_eps = sorted(episodes.keys(), key=_ep_sort_key)
         sorted_qualities = _sort_qualities(all_qualities)
 
+        # Get channel mapping and album mode
+        mapping = await self.db.get_channel_mapping(series_slug)
+        album_mode = await self.db.get_config("album_mode", default="channel")
+
         # Build caption
         caption = self._format_album_caption(
-            series_title, sorted_eps, sorted_qualities, is_movie, poster_url,
+            series_title, sorted_eps, sorted_qualities, is_movie, poster_url, channel_mapping=mapping,
         )
 
         # Build buttons
-        markup = self._build_album_buttons(series_slug, sorted_eps, sorted_qualities, is_movie)
+        markup = self._build_album_buttons(
+            series_slug, sorted_eps, sorted_qualities, is_movie, channel_mapping=mapping, album_mode=album_mode,
+        )
 
         # Check if album message already exists for this series
         entry = await self.db.library.find_one({"series_slug": series_slug, "type": "album"})
@@ -266,11 +272,16 @@ class LibraryManager:
         qualities: list[str],
         is_movie: bool,
         poster_url: str | None,
+        channel_mapping: dict | None = None,
     ) -> str:
         import html as htmlmod
         title_esc = htmlmod.escape(title)
         audio = "Multi Audio (Japanese, English & Hindi)"
         quality_str = " | ".join(qualities)
+
+        channel_line = ""
+        if channel_mapping and channel_mapping.get("invite_link"):
+            channel_line = f"➥ 📢 Cʜᴀɴɴᴇʟ:- <a href='{channel_mapping['invite_link']}'>Join Series Channel</a>\n"
 
         if is_movie:
             ep_info = "🎬 Movie"
@@ -300,6 +311,7 @@ class LibraryManager:
             f"{ep_info}\n"
             f"➥ Qᴜᴀʟɪᴛʏ:- {quality_str}\n"
             f"➥ Aᴜᴅɪᴏ:- {audio}\n"
+            f"{channel_line}"
             f"➥ Tᴏᴛᴀʟ:- {len(episodes)} {'file' if len(episodes) == 1 else 'files'}\n"
             f"⟐━━━━━━━━━━━━━━━━━⟐\n"
             f"⟲ Pᴏᴡᴇʀᴇᴅ ʙʏ:- @{self.bot_username}"
@@ -312,9 +324,34 @@ class LibraryManager:
         episodes: list[str],
         qualities: list[str],
         is_movie: bool,
+        channel_mapping: dict | None = None,
+        album_mode: str = "channel",
     ) -> InlineKeyboardMarkup:
         from bot.child_bots import child_bot_manager
         buttons = []
+
+        channel_btn = None
+        if channel_mapping and channel_mapping.get("invite_link"):
+            channel_btn = InlineKeyboardButton(
+                "📢 Watch / Episodes Channel",
+                url=channel_mapping["invite_link"],
+            )
+
+        # If channel is mapped and album_mode is "channel" (channel-only)
+        if channel_btn and album_mode == "channel":
+            buttons.append([channel_btn])
+            first_q = qualities[0] if qualities else "1080p"
+            target_bot = self.bot_username
+            if child_bot_manager:
+                assigned = child_bot_manager.get_bot_for_quality(first_q)
+                if assigned:
+                    target_bot = assigned
+            if is_movie:
+                deep = f"https://t.me/{target_bot}?start=get_{series_slug}_{first_q}_movie"
+            else:
+                deep = f"https://t.me/{target_bot}?start=get_{series_slug}_{first_q}_all"
+            buttons.append([InlineKeyboardButton("📥 Download via Bot", url=deep)])
+            return InlineKeyboardMarkup(buttons)
 
         if is_movie:
             # One row per quality for movies
@@ -342,6 +379,9 @@ class LibraryManager:
                         target_bot = assigned
                 deep = f"https://t.me/{target_bot}?start=get_{series_slug}_{q}_all"
                 buttons.append([InlineKeyboardButton(f"📥 Get All Episodes [{q}]", url=deep)])
+
+        if channel_btn and album_mode == "both":
+            buttons.insert(0, [channel_btn])
 
         return InlineKeyboardMarkup(buttons)
 
@@ -398,11 +438,16 @@ class LibraryManager:
 
                 sorted_eps = sorted(episodes.keys(), key=_ep_sort_key)
                 sorted_qualities = _sort_qualities(all_qualities)
-                is_movie = any(ep.lower() == "movie" for ep in sorted_eps)
+                mapping = await self.db.get_channel_mapping(slug)
+                album_mode = await self.db.get_config("album_mode", default="channel")
 
-                markup = self._build_album_buttons(slug, sorted_eps, sorted_qualities, is_movie)
+                markup = self._build_album_buttons(
+                    slug, sorted_eps, sorted_qualities, is_movie,
+                    channel_mapping=mapping, album_mode=album_mode,
+                )
                 caption = self._format_album_caption(
-                    a.get("series_title", slug), sorted_eps, sorted_qualities, is_movie, a.get("poster_url")
+                    a.get("series_title", slug), sorted_eps, sorted_qualities, is_movie, a.get("poster_url"),
+                    channel_mapping=mapping,
                 )
 
                 if a.get("has_poster"):

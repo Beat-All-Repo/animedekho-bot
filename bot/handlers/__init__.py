@@ -9,6 +9,8 @@ from .admin import (
     cmd_setchannellink,
     cmd_delete, delete_callback,
     cmd_addbot, cmd_delbot, cmd_bots, cmd_setbotquality, cmd_refreshalbums,
+    cmd_login, cmd_logout, cmd_userbot, cmd_cancel, cmd_autochannel,
+    cmd_albummode, cmd_createchannel, cmd_mapchannel, cmd_unmapchannel, cmd_channels,
 )
 from .admin_ai import cmd_setai, cmd_ai
 
@@ -19,6 +21,8 @@ __all__ = [
     "cmd_delete",
     "cmd_setai", "cmd_ai",
     "cmd_addbot", "cmd_delbot", "cmd_bots", "cmd_setbotquality", "cmd_refreshalbums",
+    "cmd_login", "cmd_logout", "cmd_userbot", "cmd_cancel", "cmd_autochannel",
+    "cmd_albummode", "cmd_createchannel", "cmd_mapchannel", "cmd_unmapchannel", "cmd_channels",
     "register_handlers",
 ]
 
@@ -45,6 +49,18 @@ def register_handlers(app: Client):
     app.add_handler(MessageHandler(cmd_bots, filters.command("bots") & filters.private))
     app.add_handler(MessageHandler(cmd_setbotquality, filters.command("setbotquality") & filters.private))
     app.add_handler(MessageHandler(cmd_refreshalbums, filters.command("refreshalbums") & filters.private))
+
+    # Userbot & Channel mapping commands
+    app.add_handler(MessageHandler(cmd_login, filters.command("login") & filters.private))
+    app.add_handler(MessageHandler(cmd_logout, filters.command("logout") & filters.private))
+    app.add_handler(MessageHandler(cmd_userbot, filters.command("userbot") & filters.private))
+    app.add_handler(MessageHandler(cmd_cancel, filters.command("cancel") & filters.private))
+    app.add_handler(MessageHandler(cmd_autochannel, filters.command("autochannel") & filters.private))
+    app.add_handler(MessageHandler(cmd_albummode, filters.command("albummode") & filters.private))
+    app.add_handler(MessageHandler(cmd_createchannel, filters.command("createchannel") & filters.private))
+    app.add_handler(MessageHandler(cmd_mapchannel, filters.command("mapchannel") & filters.private))
+    app.add_handler(MessageHandler(cmd_unmapchannel, filters.command("unmapchannel") & filters.private))
+    app.add_handler(MessageHandler(cmd_channels, filters.command("channels") & filters.private))
 
     # Delete callbacks (owner-only, before general router)
     app.add_handler(CallbackQueryHandler(delete_callback, filters.regex(r"^del:")))

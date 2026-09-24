@@ -462,6 +462,92 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_series_channel",
+            "description": "Create a dedicated Telegram channel for an anime series via Userbot, configure poster photo, promote bots as admins, and map it in MongoDB.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "series_title": {
+                        "type": "string",
+                        "description": "Human-readable anime title (e.g. 'Jujutsu Kaisen Season 3', 'Solo Leveling').",
+                    },
+                    "series_slug": {
+                        "type": "string",
+                        "description": "Unique anime slug (e.g. 'jujutsu-kaisen-season-3-hindi', 'solo-leveling-hindi').",
+                    },
+                    "poster_url": {
+                        "type": "string",
+                        "description": "Optional URL to anime poster to set as channel photo.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional channel description.",
+                    },
+                },
+                "required": ["series_title", "series_slug"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_channel_mapping",
+            "description": "Get mapped dedicated Telegram channel details (channel ID, invite link, title) for an anime series slug.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "series_slug": {
+                        "type": "string",
+                        "description": "The anime series slug to inspect.",
+                    },
+                },
+                "required": ["series_slug"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_channel_mappings",
+            "description": "List all mapped dedicated anime series channels with their channel IDs and permanent invite links.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_channel_mapping",
+            "description": "Manually map an existing Telegram channel to an anime series slug in MongoDB.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "series_slug": {
+                        "type": "string",
+                        "description": "Anime slug.",
+                    },
+                    "channel_id": {
+                        "type": "integer",
+                        "description": "Telegram channel ID (e.g. -100123456789).",
+                    },
+                    "invite_link": {
+                        "type": "string",
+                        "description": "Channel invite link.",
+                    },
+                    "series_title": {
+                        "type": "string",
+                        "description": "Optional human-readable title.",
+                    },
+                },
+                "required": ["series_slug", "channel_id", "invite_link"],
+            },
+        },
+    },
 ]
 
 
@@ -1045,6 +1131,28 @@ async def tool_download_anime_episode(
         clean_slug = re.sub(r'[^a-zA-Z0-9_-]', '_', anime_title)
         filename = f"{clean_slug}_S{season:02d}E{episode:02d}_{quality_pref}.mp4"
 
+        slug_base = re.sub(r'[^a-zA-Z0-9]+', '-', anime_title).strip('-').lower()
+        series_slug = f"{slug_base}-season-{season:02d}" if season > 1 else slug_base
+
+        dest_chan_id = None
+        from bot.database import db
+        if db:
+            mapping = await db.get_channel_mapping(series_slug)
+            if not mapping:
+                auto_chan = await db.get_config("auto_channel_creation", default=False)
+                from bot.userbot import userbot_manager
+                if auto_chan and userbot_manager and userbot_manager.is_active:
+                    try:
+                        mapping = await userbot_manager.create_anime_channel(
+                            series_title=anime_title.title(),
+                            series_slug=series_slug,
+                            poster_url=poster_url,
+                        )
+                    except Exception as ce:
+                        log.warning("AI auto-channel creation failed: %s", ce)
+            if mapping and mapping.get("channel_id"):
+                dest_chan_id = mapping["channel_id"]
+
         ref = "https://hubcloud.ist/" if "AnimeDrive" in (source_used or "") else ("https://drive.toonflix.in/" if "ToonFlix" in (source_used or "") else "")
         success, sent_msg = await download_and_upload(
             chat_id=chat_id,
@@ -1057,6 +1165,7 @@ async def tool_download_anime_episode(
             variant_url=variant_url,
             referer=ref,
             poster_url=poster_url,
+            destination_channel_id=dest_chan_id,
         )
 
         if success and sent_msg:
@@ -1170,6 +1279,26 @@ async def tool_download_and_send_anime(stream_url: str, title: str, quality: str
         )
 
         clean_filename = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', title)}_{quality}.mp4"
+        slug = re.sub(r'[^a-zA-Z0-9]+', '-', title).strip('-').lower()
+
+        dest_chan_id = None
+        from bot.database import db
+        if db:
+            mapping = await db.get_channel_mapping(slug)
+            if not mapping:
+                auto_chan = await db.get_config("auto_channel_creation", default=False)
+                from bot.userbot import userbot_manager
+                if auto_chan and userbot_manager and userbot_manager.is_active:
+                    try:
+                        mapping = await userbot_manager.create_anime_channel(
+                            series_title=title.title(),
+                            series_slug=slug,
+                        )
+                    except Exception as ce:
+                        log.warning("AI auto-channel creation failed in movie: %s", ce)
+            if mapping and mapping.get("channel_id"):
+                dest_chan_id = mapping["channel_id"]
+
         success, sent_msg = await download_and_upload(
             chat_id=chat_id,
             stream_url=stream_url,
@@ -1178,6 +1307,7 @@ async def tool_download_and_send_anime(stream_url: str, title: str, quality: str
             title=title,
             progress_msg=status_msg,
             client=client,
+            destination_channel_id=dest_chan_id,
         )
 
         if success and sent_msg:
@@ -1296,6 +1426,103 @@ async def tool_forget_fact(key: str) -> str:
         return f"Failed to delete fact: {e}"
 
 
+async def tool_create_series_channel(
+    series_title: str,
+    series_slug: str,
+    poster_url: str = "",
+    description: str = "",
+) -> str:
+    """Create a dedicated per-anime channel via Userbot, promote bots, and map it in MongoDB."""
+    from bot.userbot import userbot_manager
+    if not userbot_manager or not userbot_manager.is_active:
+        return "Error: Userbot is not connected. The owner needs to run /login first to enable channel creation."
+
+    try:
+        mapping = await userbot_manager.create_anime_channel(
+            series_title=series_title,
+            series_slug=series_slug,
+            poster_url=poster_url or None,
+            description=description or None,
+        )
+        return json.dumps({
+            "status": "success",
+            "series_title": mapping.get("series_title", series_title),
+            "series_slug": series_slug,
+            "channel_id": mapping["channel_id"],
+            "invite_link": mapping.get("invite_link"),
+        }, indent=2)
+    except Exception as e:
+        return f"Error creating anime channel: {e}"
+
+
+async def tool_get_channel_mapping(series_slug: str) -> str:
+    """Get mapped dedicated Telegram channel details for an anime series."""
+    from bot.database import db
+    if not db:
+        return "Error: Database not initialized."
+
+    try:
+        mapping = await db.get_channel_mapping(series_slug)
+        if not mapping:
+            return f"No channel mapped for series slug '{series_slug}'."
+        clean = {k: v for k, v in mapping.items() if k != "_id"}
+        return json.dumps(clean, indent=2)
+    except Exception as e:
+        return f"Error getting channel mapping: {e}"
+
+
+async def tool_list_channel_mappings() -> str:
+    """List all mapped anime series channels."""
+    from bot.database import db
+    if not db:
+        return "Error: Database not initialized."
+
+    try:
+        channels = await db.list_channel_mappings()
+        if not channels:
+            return "No mapped anime channels found."
+        summary = []
+        for c in channels:
+            summary.append({
+                "series_title": c.get("series_title"),
+                "series_slug": c.get("series_slug"),
+                "channel_id": c.get("channel_id"),
+                "invite_link": c.get("invite_link"),
+            })
+        return json.dumps(summary, indent=2)
+    except Exception as e:
+        return f"Error listing channel mappings: {e}"
+
+
+async def tool_set_channel_mapping(
+    series_slug: str,
+    channel_id: int,
+    invite_link: str,
+    series_title: str = "",
+) -> str:
+    """Manually map an anime series to an existing Telegram channel."""
+    from bot.database import db
+    if not db:
+        return "Error: Database not initialized."
+
+    try:
+        mapping = await db.set_channel_mapping(
+            series_slug=series_slug,
+            channel_id=channel_id,
+            invite_link=invite_link,
+            series_title=series_title or series_slug,
+            auto_created=False,
+        )
+        return json.dumps({
+            "status": "success",
+            "series_slug": series_slug,
+            "channel_id": channel_id,
+            "invite_link": invite_link,
+        }, indent=2)
+    except Exception as e:
+        return f"Error setting channel mapping: {e}"
+
+
 # ── Tool Dispatcher ───────────────────────────────────────────────────
 
 TOOL_MAP = {
@@ -1319,6 +1546,10 @@ TOOL_MAP = {
     "remember_fact": tool_remember_fact,
     "recall_facts": tool_recall_facts,
     "forget_fact": tool_forget_fact,
+    "create_series_channel": tool_create_series_channel,
+    "get_channel_mapping": tool_get_channel_mapping,
+    "list_channel_mappings": tool_list_channel_mappings,
+    "set_channel_mapping": tool_set_channel_mapping,
 }
 
 

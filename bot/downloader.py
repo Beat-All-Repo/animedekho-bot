@@ -584,6 +584,7 @@ async def download_and_upload(
     variant_url: str = "",
     referer: str = "",
     poster_url: str = "",
+    destination_channel_id: int | None = None,
 ) -> tuple[bool, Message | None]:
     """Download video + upload via Pyrogram MTProto with progress and poster thumbnail."""
     output_path = str(_TEMP_BASE / filename)
@@ -653,6 +654,7 @@ async def download_and_upload(
                 interval=3.0,
             )
 
+        target_upload_chat = destination_channel_id or chat_id
         await progress_msg.edit_text(
             f"📤 <b>Uploading to Telegram</b>\n"
             f"┌ 📺 {title}\n"
@@ -663,7 +665,7 @@ async def download_and_upload(
 
         try:
             sent_msg = await client.send_document(
-                chat_id=chat_id,
+                chat_id=target_upload_chat,
                 document=output_path,
                 thumb=thumb_path,
                 file_name=filename,
@@ -674,7 +676,7 @@ async def download_and_upload(
             if thumb_path:
                 log.warning("Upload with thumb failed, retrying without thumb: %s", te)
                 sent_msg = await client.send_document(
-                    chat_id=chat_id,
+                    chat_id=target_upload_chat,
                     document=output_path,
                     file_name=filename,
                     caption=f"📺 {title} [{quality}]",
@@ -682,6 +684,19 @@ async def download_and_upload(
                 )
             else:
                 raise
+
+        # If uploaded to dedicated channel and chat_id is user PM, send file to user via file_id
+        if destination_channel_id and chat_id != destination_channel_id:
+            try:
+                fid = sent_msg.video.file_id if sent_msg.video else (sent_msg.document.file_id if sent_msg.document else None)
+                if fid:
+                    await client.send_document(
+                        chat_id=chat_id,
+                        document=fid,
+                        caption=f"📺 {title} [{quality}]",
+                    )
+            except Exception as ue:
+                log.warning("Forward/send to user chat %d failed: %s", chat_id, ue)
 
         total_time = time.time() - overall_start
         await progress_msg.edit_text(
