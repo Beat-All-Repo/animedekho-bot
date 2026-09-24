@@ -22,6 +22,7 @@ class Database:
         self.config = self.db["config"]
         self.ai_history = self.db["ai_history"]
         self.ai_facts = self.db["ai_facts"]
+        self.child_bots = self.db["child_bots"]
 
     async def init_indexes(self):
         """Create necessary indexes."""
@@ -39,6 +40,8 @@ class Database:
         await self.downloads.create_index("timestamp")
         await self.ai_history.create_index([("chat_id", 1), ("timestamp", 1)])
         await self.ai_facts.create_index([("chat_id", 1), ("key", 1)], unique=True)
+        await self.child_bots.create_index("bot_id", unique=True)
+        await self.child_bots.create_index("username")
         log.info("MongoDB indexes created")
 
     # ── User management ───────────────────────────────────────────
@@ -209,21 +212,29 @@ class Database:
         episode_key: str,
         file_id: str,
         file_unique_id: str,
+        storage_channel_id: int | None = None,
+        storage_message_id: int | None = None,
     ):
         """Save a downloaded file reference for future cache lookups."""
         try:
+            update_data = {
+                "series_title": series_title,
+                "file_id": file_id,
+                "file_unique_id": file_unique_id,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if storage_channel_id:
+                update_data["storage_channel_id"] = storage_channel_id
+            if storage_message_id:
+                update_data["storage_message_id"] = storage_message_id
+
             await self.files.update_one(
                 {
                     "series_slug": series_slug,
                     "quality": quality,
                     "episode_key": episode_key,
                 },
-                {"$set": {
-                    "series_title": series_title,
-                    "file_id": file_id,
-                    "file_unique_id": file_unique_id,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }},
+                {"$set": update_data},
                 upsert=True,
             )
         except Exception as e:
@@ -329,6 +340,110 @@ class Database:
         except Exception as e:
             log.warning("Failed to delete AI memory fact: %s", e)
             return False
+
+    # ── Child Bot Management ──────────────────────────────────────
+
+    async def add_child_bot(
+        self,
+        token: str,
+        username: str,
+        bot_id: int,
+        quality: str = "all",
+        first_name: str = "",
+    ) -> bool:
+        """Add or update a child worker bot in MongoDB."""
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            await self.child_bots.update_one(
+                {"bot_id": bot_id},
+                {"$set": {
+                    "token": token,
+                    "username": username.lstrip("@"),
+                    "bot_id": bot_id,
+                    "first_name": first_name,
+                    "quality": quality.strip().lower(),
+                    "is_active": True,
+                    "updated_at": now,
+                }, "$setOnInsert": {
+                    "created_at": now,
+                    "files_served": 0,
+                }},
+                upsert=True,
+            )
+            return True
+        except Exception as e:
+            log.warning("Failed to add child bot %s (%d): %s", username, bot_id, e)
+            return False
+
+    async def remove_child_bot(self, identifier: str) -> bool:
+        """Remove a child bot by username or bot_id."""
+        clean = identifier.strip().lstrip("@")
+        query_clauses: list[dict] = [
+            {"username": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}},
+            {"token": clean},
+        ]
+        if clean.isdigit():
+            query_clauses.append({"bot_id": int(clean)})
+        query = {"$or": query_clauses}
+        try:
+            res = await self.child_bots.delete_one(query)
+            return res.deleted_count > 0
+        except Exception as e:
+            log.warning("Failed to remove child bot %s: %s", identifier, e)
+            return False
+
+    async def get_child_bots(self, active_only: bool = False) -> list[dict]:
+        """Get all child bots from database."""
+        query = {"is_active": True} if active_only else {}
+        try:
+            cursor = self.child_bots.find(query).sort("created_at", 1)
+            return await cursor.to_list(length=100)
+        except Exception as e:
+            log.warning("Failed to list child bots: %s", e)
+            return []
+
+    async def get_child_bot(self, identifier: str) -> dict | None:
+        """Get a single child bot by username or bot_id."""
+        clean = identifier.strip().lstrip("@")
+        query_clauses: list[dict] = [
+            {"username": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}},
+            {"token": clean},
+        ]
+        if clean.isdigit():
+            query_clauses.append({"bot_id": int(clean)})
+        query = {"$or": query_clauses}
+        try:
+            return await self.child_bots.find_one(query)
+        except Exception as e:
+            log.warning("Failed to get child bot %s: %s", identifier, e)
+            return None
+
+    async def update_child_bot(self, identifier: str, update_data: dict) -> bool:
+        """Update fields for a child bot."""
+        clean = identifier.strip().lstrip("@")
+        query_clauses: list[dict] = [
+            {"username": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}},
+        ]
+        if clean.isdigit():
+            query_clauses.append({"bot_id": int(clean)})
+        query = {"$or": query_clauses}
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            res = await self.child_bots.update_one(query, {"$set": update_data})
+            return res.modified_count > 0
+        except Exception as e:
+            log.warning("Failed to update child bot %s: %s", identifier, e)
+            return False
+
+    async def increment_child_bot_stats(self, bot_id: int):
+        """Increment files served counter for a child bot."""
+        try:
+            await self.child_bots.update_one(
+                {"bot_id": bot_id},
+                {"$inc": {"files_served": 1}}
+            )
+        except Exception:
+            pass
 
     def close(self):
         """Close the MongoDB connection."""

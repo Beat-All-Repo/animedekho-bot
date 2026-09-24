@@ -1101,6 +1101,8 @@ async def tool_download_anime_episode(
                             episode_key=episode_key,
                             file_id=file_id,
                             file_unique_id=file_unique_id,
+                            storage_channel_id=sent_msg.chat.id,
+                            storage_message_id=sent_msg.id,
                         )
                     except Exception as de:
                         log.warning("DB save failed for AI download: %s", de)

@@ -93,6 +93,149 @@ async def cmd_setchannellink(client: Client, message: Message):
 
 
 @require_owner
+async def cmd_addbot(client: Client, message: Message):
+    """Add a child worker bot to distribute download load."""
+    args = _parse_args(message)
+    if not args:
+        await message.reply_text(
+            "<b>Usage:</b> <code>/addbot &lt;bot_token&gt; [quality]</code>\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>/addbot 123456:ABC... 480p</code> (serves 480p)\n"
+            "• <code>/addbot 123456:ABC... 720p</code> (serves 720p)\n"
+            "• <code>/addbot 123456:ABC... 1080p</code> (serves 1080p)\n"
+            "• <code>/addbot 123456:ABC... 4K</code> (serves 4K/HQ)\n"
+            "• <code>/addbot 123456:ABC... all</code> (serves all qualities)",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    token = args[0].strip()
+    quality = args[1].strip().lower() if len(args) > 1 else "all"
+
+    from bot.child_bots import child_bot_manager
+    if not child_bot_manager:
+        await message.reply_text("⚠️ Child bot manager is not initialized.")
+        return
+
+    status_msg = await message.reply_text("⏳ Verifying token with Telegram...", parse_mode=enums.ParseMode.HTML)
+    try:
+        res = await child_bot_manager.add_bot(token, quality=quality)
+        await status_msg.edit_text(
+            f"✅ <b>Child Worker Bot Connected!</b>\n\n"
+            f"🤖 <b>Bot:</b> @{res['username']} (<code>{res['bot_id']}</code>)\n"
+            f"⚡ <b>Assigned Quality:</b> <code>{res['quality'].upper()}</code>\n"
+            f"🟢 <b>Status:</b> Online & Serving\n\n"
+            f"<i>Channel post buttons will now direct users to this bot for {res['quality'].upper()} requests.</i>\n"
+            f"💡 <i>Tip: Run /refreshalbums to update all existing channel album buttons!</i>",
+            parse_mode=enums.ParseMode.HTML,
+        )
+    except Exception as e:
+        await status_msg.edit_text(f"❌ <b>Failed to add child bot:</b>\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_delbot(client: Client, message: Message):
+    """Remove a child worker bot."""
+    args = _parse_args(message)
+    if not args:
+        await message.reply_text("Usage: <code>/delbot &lt;@username or bot_id&gt;</code>", parse_mode=enums.ParseMode.HTML)
+        return
+
+    identifier = args[0].strip()
+    from bot.child_bots import child_bot_manager
+    if not child_bot_manager:
+        await message.reply_text("⚠️ Child bot manager not initialized.")
+        return
+
+    success = await child_bot_manager.remove_bot(identifier)
+    if success:
+        await message.reply_text(f"🗑️ Child bot <code>{identifier}</code> stopped and removed from system.", parse_mode=enums.ParseMode.HTML)
+    else:
+        await message.reply_text(f"❌ Child bot <code>{identifier}</code> not found in database.", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_bots(client: Client, message: Message):
+    """List all connected child worker bots."""
+    from bot.child_bots import child_bot_manager
+    if not child_bot_manager:
+        await message.reply_text("⚠️ Child bot manager not initialized.")
+        return
+
+    bots = await child_bot_manager.get_all_bots()
+    main_me = await client.get_me()
+
+    text = f"👑 <b>Main Controller Bot:</b> @{main_me.username}\n\n"
+    if not bots:
+        text += (
+            "🤖 <b>No Child Worker Bots Connected.</b>\n\n"
+            "All download requests and links are handled directly by the Main Bot.\n\n"
+            "To add worker bots for load balancing:\n"
+            "<code>/addbot &lt;token&gt; 480p</code>\n"
+            "<code>/addbot &lt;token&gt; 720p</code>\n"
+            "<code>/addbot &lt;token&gt; 1080p</code>\n"
+            "<code>/addbot &lt;token&gt; 4K</code>"
+        )
+        await message.reply_text(text, parse_mode=enums.ParseMode.HTML)
+        return
+
+    text += f"🤖 <b>Child Worker Bots ({len(bots)}):</b>\n\n"
+    for i, b in enumerate(bots, 1):
+        status_icon = "🟢 Online" if b.get("is_online") else "🔴 Offline"
+        served = b.get("files_served", 0)
+        q = b.get("quality", "all").upper()
+        text += (
+            f"<b>{i}. @{b.get('username', 'Unknown')}</b>\n"
+            f"   • <b>ID:</b> <code>{b.get('bot_id')}</code>\n"
+            f"   • <b>Target Quality:</b> <code>{q}</code>\n"
+            f"   • <b>Status:</b> {status_icon}\n"
+            f"   • <b>Files Delivered:</b> {served}\n\n"
+        )
+
+    text += "<i>Commands: /addbot, /delbot, /setbotquality, /refreshalbums</i>"
+    await message.reply_text(text, parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_setbotquality(client: Client, message: Message):
+    """Change the assigned quality tier for a child worker bot."""
+    args = _parse_args(message)
+    if len(args) < 2:
+        await message.reply_text("Usage: <code>/setbotquality &lt;@username or bot_id&gt; &lt;480p|720p|1080p|4k|all&gt;</code>", parse_mode=enums.ParseMode.HTML)
+        return
+
+    identifier = args[0].strip()
+    quality = args[1].strip().lower()
+
+    from bot.child_bots import child_bot_manager
+    if not child_bot_manager:
+        await message.reply_text("⚠️ Child bot manager not initialized.")
+        return
+
+    success = await child_bot_manager.set_bot_quality(identifier, quality)
+    if success:
+        await message.reply_text(f"✅ Child bot <code>{identifier}</code> quality updated to <b>[{quality.upper()}]</b>.", parse_mode=enums.ParseMode.HTML)
+    else:
+        await message.reply_text(f"❌ Child bot <code>{identifier}</code> not found.", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_refreshalbums(client: Client, message: Message):
+    """Re-build buttons on all existing channel album posts with current child bot links."""
+    from bot.library import library_manager
+    if not library_manager or not library_manager.channel:
+        await message.reply_text("⚠️ Main channel or library manager is not configured.")
+        return
+
+    status_msg = await message.reply_text("🔄 Updating channel album posts with latest child bot links...", parse_mode=enums.ParseMode.HTML)
+    try:
+        count = await library_manager.refresh_all_albums()
+        await status_msg.edit_text(f"✅ Successfully refreshed <b>{count}</b> channel album post(s) with updated bot links!", parse_mode=enums.ParseMode.HTML)
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Failed to refresh channel albums: {e}")
+
+
+@require_owner
 async def cmd_delete(client: Client, message: Message):
     """Interactive delete — shows all downloaded series as buttons."""
     from bot.database import db

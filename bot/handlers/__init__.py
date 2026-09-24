@@ -8,6 +8,7 @@ from .admin import (
     cmd_adduser, cmd_removeuser, cmd_users,
     cmd_setchannellink,
     cmd_delete, delete_callback,
+    cmd_addbot, cmd_delbot, cmd_bots, cmd_setbotquality, cmd_refreshalbums,
 )
 from .admin_ai import cmd_setai, cmd_ai
 
@@ -17,6 +18,7 @@ __all__ = [
     "cmd_setchannellink",
     "cmd_delete",
     "cmd_setai", "cmd_ai",
+    "cmd_addbot", "cmd_delbot", "cmd_bots", "cmd_setbotquality", "cmd_refreshalbums",
     "register_handlers",
 ]
 
@@ -38,6 +40,11 @@ def register_handlers(app: Client):
     app.add_handler(MessageHandler(cmd_users, filters.command("users") & filters.private))
     app.add_handler(MessageHandler(cmd_setchannellink, filters.command("setchannellink") & filters.private))
     app.add_handler(MessageHandler(cmd_delete, filters.command("delete") & filters.private))
+    app.add_handler(MessageHandler(cmd_addbot, filters.command("addbot") & filters.private))
+    app.add_handler(MessageHandler(cmd_delbot, filters.command("delbot") & filters.private))
+    app.add_handler(MessageHandler(cmd_bots, filters.command("bots") & filters.private))
+    app.add_handler(MessageHandler(cmd_setbotquality, filters.command("setbotquality") & filters.private))
+    app.add_handler(MessageHandler(cmd_refreshalbums, filters.command("refreshalbums") & filters.private))
 
     # Delete callbacks (owner-only, before general router)
     app.add_handler(CallbackQueryHandler(delete_callback, filters.regex(r"^del:")))

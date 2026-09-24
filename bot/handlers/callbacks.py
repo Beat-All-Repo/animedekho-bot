@@ -874,6 +874,8 @@ async def _do_batch_download(client: Client, chat_id, series, season, episodes, 
                                     episode_key=f"S{season}E{ep.number:02d}",
                                     file_id=file_id,
                                     file_unique_id=file_unique_id,
+                                    storage_channel_id=sent_msg.chat.id,
+                                    storage_message_id=sent_msg.id,
                                 )
                                 await db.log_download(
                                     user_id=user.id,
@@ -1062,6 +1064,8 @@ async def _do_download(client: Client, chat_id, candidates: list[tuple[VideoServ
                             episode_key=episode_key or "movie",
                             file_id=file_id,
                             file_unique_id=file_unique_id,
+                            storage_channel_id=sent_msg.chat.id,
+                            storage_message_id=sent_msg.id,
                         )
                         await db.log_download(
                             user_id=user.id,

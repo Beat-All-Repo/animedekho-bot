@@ -106,8 +106,12 @@ async def _handle_file_request(client: Client, message: Message, param: str):
     # Parse: get_<slug>_<quality>_<ep_key>
     raw = param[4:]  # strip "get_"
 
-    # Try to match episode key at the end (S\d+E\d+|movie|all)
-    m = re.match(r"^(.+)_(\d+p|auto)_(S\d+E\d+|movie|all)$", raw, re.IGNORECASE)
+    # Match episode key at the end (S\d+E\d+|movie|all)
+    m = re.match(
+        r"^(.+?)_(480p|720p|1080p|1080p\s*hq|1080p\s*hq\s*x265|4k|2160p|\d+p|auto)_(s\d+e\d+|movie|all)$",
+        raw,
+        re.IGNORECASE,
+    )
     if not m:
         await message.reply_text("⚠️ Invalid file link format.")
         return
@@ -123,21 +127,36 @@ async def _handle_file_request(client: Client, message: Message, param: str):
     # Handle fetching ALL episodes
     if episode_key.lower() == "all":
         # Fetch all files for this series and quality
-        cursor = db.files.find({"series_slug": series_slug, "quality": quality})
+        query = {"series_slug": series_slug}
+        if quality.lower() in ("4k", "2160p", "2160"):
+            query["quality"] = {
+                "$in": [
+                    "4K", "4k", "2160p", "2160P", "2160",
+                    "1080p HQ", "1080p HQ x265", "1080p 10-Bit", "1080p 10bit",
+                    "1080p x265", "1080p HEVC",
+                ]
+            }
+        else:
+            query["quality"] = {"$regex": f"^{re.escape(quality)}$", "$options": "i"}
+
+        cursor = db.files.find(query)
         all_files = await cursor.to_list(length=None)
-        
+        if not all_files:
+            all_files = await db.files.find({"series_title": {"$regex": f"^{re.escape(title)}$", "$options": "i"}}).to_list(length=None)
+
         if not all_files:
             await message.reply_text("❌ No files found for this series.")
             return
-            
+
         from bot.library import _ep_sort_key
         all_files.sort(key=lambda x: _ep_sort_key(x["episode_key"]))
-        
+
         status_msg = await message.reply_text(f"📤 Sending {len(all_files)} episodes...")
         for f in all_files:
             ep_key = f["episode_key"]
             file_id = f["file_id"]
-            caption = f"📺 {htmlmod.escape(title)} [{quality}] — {ep_key}"
+            q_label = f.get("quality", quality)
+            caption = f"📺 {htmlmod.escape(title)} [{q_label}] — {ep_key}"
             try:
                 await message.reply_video(video=file_id, caption=caption, parse_mode=enums.ParseMode.HTML)
             except Exception:
@@ -145,12 +164,13 @@ async def _handle_file_request(client: Client, message: Message, param: str):
                     await message.reply_document(document=file_id, caption=caption, parse_mode=enums.ParseMode.HTML)
                 except Exception as e:
                     log.error("Failed to send %s: %s", ep_key, e)
-        
+
         await status_msg.delete()
         return
 
     # Normal single-file logic
-    file_id = await library_manager.get_file(series_slug, quality, episode_key)
+    cached = await db.find_cached_file(series_slug, episode_key, quality)
+    file_id = cached.get("file_id") if cached else await library_manager.get_file(series_slug, quality, episode_key)
     if not file_id:
         await message.reply_text("❌ File not found in library.")
         return

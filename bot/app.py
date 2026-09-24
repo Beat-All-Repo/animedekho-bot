@@ -90,6 +90,14 @@ async def _on_start(client: Client):
         except Exception as e:
             log.warning("Could not auto-generate invite link: %s", e)
 
+    # Init Child Bot Manager
+    from bot.child_bots import ChildBotManager
+    import bot.child_bots as child_mod
+    child_mgr = ChildBotManager(main_client=client)
+    await child_mgr.start()
+    child_mod.child_bot_manager = child_mgr
+    log.info("Child Bot Manager initialized")
+
     # Set bot commands menu
     from pyrogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
     try:
@@ -113,18 +121,28 @@ async def _on_start(client: Client):
                 BotCommand("users", "List approved users"),
                 BotCommand("setchannellink", "Set channel invite link"),
                 BotCommand("delete", "Delete a series or file"),
+                BotCommand("addbot", "Add a child worker bot"),
+                BotCommand("delbot", "Remove a child worker bot"),
+                BotCommand("bots", "List child worker bots"),
+                BotCommand("setbotquality", "Set child bot quality tier"),
+                BotCommand("refreshalbums", "Refresh channel album buttons"),
             ], scope=BotCommandScopeChat(settings.bot.owner_id))
         log.info("Bot commands menu set successfully")
     except Exception as e:
         log.warning("Failed to set bot commands: %s", e)
+
+
 async def _on_stop(client: Client):
     """Called on shutdown — cleanup."""
+    from bot.child_bots import child_bot_manager
+    if child_bot_manager:
+        await child_bot_manager.stop()
     from utils.http import http_client
     await http_client.close()
     from bot.database import db
     if db:
         db.close()
-    log.info("HTTP client & MongoDB closed")
+    log.info("HTTP client, Child Bots & MongoDB closed")
 
 
 def create_app() -> Client:

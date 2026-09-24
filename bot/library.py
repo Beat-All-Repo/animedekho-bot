@@ -313,13 +313,19 @@ class LibraryManager:
         qualities: list[str],
         is_movie: bool,
     ) -> InlineKeyboardMarkup:
+        from bot.child_bots import child_bot_manager
         buttons = []
 
         if is_movie:
             # One row per quality for movies
             row = []
             for q in qualities:
-                deep = f"https://t.me/{self.bot_username}?start=get_{series_slug}_{q}_movie"
+                target_bot = self.bot_username
+                if child_bot_manager:
+                    assigned = child_bot_manager.get_bot_for_quality(q)
+                    if assigned:
+                        target_bot = assigned
+                deep = f"https://t.me/{target_bot}?start=get_{series_slug}_{q}_movie"
                 row.append(InlineKeyboardButton(f"📥 {q}", url=deep))
                 if len(row) == 2:
                     buttons.append(row)
@@ -329,7 +335,12 @@ class LibraryManager:
         else:
             # "Get All" button per quality
             for q in qualities:
-                deep = f"https://t.me/{self.bot_username}?start=get_{series_slug}_{q}_all"
+                target_bot = self.bot_username
+                if child_bot_manager:
+                    assigned = child_bot_manager.get_bot_for_quality(q)
+                    if assigned:
+                        target_bot = assigned
+                deep = f"https://t.me/{target_bot}?start=get_{series_slug}_{q}_all"
                 buttons.append([InlineKeyboardButton(f"📥 Get All Episodes [{q}]", url=deep)])
 
         return InlineKeyboardMarkup(buttons)
@@ -352,6 +363,71 @@ class LibraryManager:
             except Exception as e:
                 log.warning("Could not delete album message: %s", e)
         await self.db.library.delete_many({"series_slug": series_slug})
+
+    async def refresh_all_albums(self) -> int:
+        """
+        Re-generate buttons for all existing series albums in the channel.
+        Updates all channel posts to use newly assigned child worker bots!
+        """
+        if not self.channel:
+            return 0
+
+        cursor = self.db.library.find({"type": "album"})
+        albums = await cursor.to_list(length=None)
+        refreshed = 0
+
+        for a in albums:
+            slug = a.get("series_slug")
+            msg_id = a.get("message_id")
+            if not slug or not msg_id:
+                continue
+
+            try:
+                all_files = await self.db.files.find({"series_slug": slug}).to_list(length=None)
+                if not all_files:
+                    continue
+
+                episodes: dict[str, set[str]] = {}
+                all_qualities: set[str] = set()
+                for f in all_files:
+                    ep = f.get("episode_key", "")
+                    q = f.get("quality", "")
+                    if ep and q:
+                        episodes.setdefault(ep, set()).add(q)
+                        all_qualities.add(q)
+
+                sorted_eps = sorted(episodes.keys(), key=_ep_sort_key)
+                sorted_qualities = _sort_qualities(all_qualities)
+                is_movie = any(ep.lower() == "movie" for ep in sorted_eps)
+
+                markup = self._build_album_buttons(slug, sorted_eps, sorted_qualities, is_movie)
+                caption = self._format_album_caption(
+                    a.get("series_title", slug), sorted_eps, sorted_qualities, is_movie, a.get("poster_url")
+                )
+
+                if a.get("has_poster"):
+                    await self.client.edit_message_caption(
+                        chat_id=self.channel,
+                        message_id=msg_id,
+                        caption=caption[:CAPTION_LIMIT],
+                        parse_mode=enums.ParseMode.HTML,
+                        reply_markup=markup,
+                    )
+                else:
+                    await self.client.edit_message_text(
+                        chat_id=self.channel,
+                        message_id=msg_id,
+                        text=caption[:CAPTION_LIMIT],
+                        parse_mode=enums.ParseMode.HTML,
+                        disable_web_page_preview=True,
+                        reply_markup=markup,
+                    )
+                refreshed += 1
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                log.warning("Failed to refresh album %s (msg %d): %s", slug, msg_id, e)
+
+        return refreshed
 
 
 def _ep_sort_key(key: str):
