@@ -739,7 +739,23 @@ async def cmd_mapchannel(client: Client, message: Message):
         await message.reply_text("❌ Channel ID must be an integer (e.g. -100123456789).")
         return
 
-    invite_link = args[2].strip() if len(args) > 2 else ""
+    language = ""
+    invite_link = ""
+
+    # Parse optional language and invite_link
+    if len(args) > 2:
+        arg2 = args[2].strip()
+        if arg2.startswith("http://") or arg2.startswith("https://") or arg2.startswith("t.me"):
+            invite_link = arg2
+        else:
+            language = arg2.lower()
+
+    if len(args) > 3:
+        arg3 = args[3].strip()
+        if not invite_link and (arg3.startswith("http://") or arg3.startswith("https://") or arg3.startswith("t.me")):
+            invite_link = arg3
+        elif not language:
+            language = arg3.lower()
 
     if not db:
         await message.reply_text("⚠️ Database not available.")
@@ -752,12 +768,14 @@ async def cmd_mapchannel(client: Client, message: Message):
         series_title=slug,
         auto_created=False,
         created_by=message.from_user.id,
+        language=language,
     )
 
+    lang_note = f"\n🌐 <b>Language Route:</b> <code>{language.upper()}</code>" if language else "\n🌐 <b>Route:</b> <code>DEFAULT</code>"
     await message.reply_text(
-        f"✅ <b>Channel Mapped!</b>\n\n"
+        f"✅ <b>Channel Mapped Successfully!</b>\n\n"
         f"🏷️ <b>Slug:</b> <code>{slug}</code>\n"
-        f"🆔 <b>Channel ID:</b> <code>{channel_id}</code>\n"
+        f"🆔 <b>Channel ID:</b> <code>{channel_id}</code>{lang_note}\n"
         f"🔗 <b>Invite Link:</b> {invite_link or 'None'}",
         parse_mode=enums.ParseMode.HTML,
         disable_web_page_preview=True,
@@ -766,28 +784,33 @@ async def cmd_mapchannel(client: Client, message: Message):
 
 @require_owner
 async def cmd_unmapchannel(client: Client, message: Message):
-    """Remove channel mapping for a series slug."""
+    """Remove channel mapping or specific language route for a series slug."""
     from bot.database import db
     args = _parse_args(message)
     if not args:
-        await message.reply_text("Usage: /unmapchannel <series_slug>")
+        await message.reply_text("Usage: <code>/unmapchannel &lt;series_slug&gt; [language]</code>", parse_mode=enums.ParseMode.HTML)
         return
 
     slug = args[0].strip()
+    language = args[1].strip().lower() if len(args) > 1 else ""
+
     if not db:
         await message.reply_text("⚠️ Database not available.")
         return
 
-    deleted = await db.delete_channel_mapping(slug)
+    deleted = await db.delete_channel_mapping(slug, language=language)
     if deleted:
-        await message.reply_text(f"✅ Removed channel mapping for <code>{slug}</code>.", parse_mode=enums.ParseMode.HTML)
+        if language:
+            await message.reply_text(f"✅ Removed <code>{language.upper()}</code> route for <code>{slug}</code>.", parse_mode=enums.ParseMode.HTML)
+        else:
+            await message.reply_text(f"✅ Removed channel mapping for <code>{slug}</code>.", parse_mode=enums.ParseMode.HTML)
     else:
-        await message.reply_text(f"ℹ️ No channel mapping found for <code>{slug}</code>.", parse_mode=enums.ParseMode.HTML)
+        await message.reply_text(f"ℹ️ No channel mapping or language route found for <code>{slug}</code>.", parse_mode=enums.ParseMode.HTML)
 
 
 @require_owner
 async def cmd_channels(client: Client, message: Message):
-    """List all mapped channels."""
+    """List all mapped channels and language routes."""
     from bot.database import db
     if not db:
         await message.reply_text("⚠️ Database not available.")
@@ -804,7 +827,12 @@ async def cmd_channels(client: Client, message: Message):
         cid = c.get("channel_id")
         link = c.get("invite_link")
         link_str = f"<a href='{link}'>Link</a>" if link else "No link"
-        lines.append(f"• <b>{title}</b>\n  ID: <code>{cid}</code> | {link_str} | Slug: <code>{c.get('series_slug')}</code>")
+        lang_routes = c.get("language_routes", {})
+        routes_str = ""
+        if lang_routes:
+            r_items = [f"{l.upper()}: <code>{r['channel_id']}</code>" for l, r in lang_routes.items()]
+            routes_str = f"\n  🌐 <b>Routes:</b> {', '.join(r_items)}"
+        lines.append(f"• <b>{title}</b>\n  Default ID: <code>{cid}</code> | {link_str} | Slug: <code>{c.get('series_slug')}</code>{routes_str}")
 
     text = f"📋 <b>Mapped Series Channels ({len(channels)}):</b>\n\n" + "\n\n".join(lines)
     if len(text) > 4000:
@@ -952,3 +980,305 @@ async def health_callback(client: Client, query: CallbackQuery):
             await query.edit_message_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
         except Exception:
             pass
+
+
+# ── Dump / Storage Channel (Point 4) ─────────────────────────────────
+
+@require_owner
+async def cmd_setdump(client: Client, message: Message):
+    """Configure or disable dump/storage channel."""
+    from bot.database import db
+    args = _parse_args(message)
+    if not args:
+        current = await db.get_dump_channel() if db else None
+        status = f"<code>{current}</code>" if current else "<i>Disabled (OFF by default)</i>"
+        await message.reply_text(
+            f"💾 <b>Dump / Storage Channel Configuration</b>\n\n"
+            f"• <b>Current Dump Channel:</b> {status}\n\n"
+            f"<b>Usage:</b>\n"
+            f"• <code>/setdump &lt;channel_id&gt;</code> — Set dump channel (e.g. <code>/setdump -100123456789</code>)\n"
+            f"• <code>/setdump off</code> — Disable dump channel (uploads directly as before)",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    val = args[0].strip().lower()
+    if val in ("off", "disable", "none", "0"):
+        if db:
+            await db.set_dump_channel(None)
+        await message.reply_text("✅ <b>Dump Channel Disabled.</b> Videos will be uploaded directly as before.", parse_mode=enums.ParseMode.HTML)
+        return
+
+    try:
+        cid = int(val)
+        if db:
+            await db.set_dump_channel(cid)
+        await message.reply_text(
+            f"✅ <b>Dump Channel Configured:</b> <code>{cid}</code>\n\n"
+            "Downloaded video files will now be cached in this storage channel first, and mapped anime channels / users will receive files instantly via Telegram file_id without re-downloading!",
+            parse_mode=enums.ParseMode.HTML,
+        )
+    except ValueError:
+        await message.reply_text("❌ Channel ID must be an integer (e.g. <code>-100123456789</code>).", parse_mode=enums.ParseMode.HTML)
+
+
+# ── Custom Thumbnail System (Point 5) ────────────────────────────────
+
+@require_owner
+async def cmd_setthumb(client: Client, message: Message):
+    """
+    Set custom thumbnail from replied photo.
+    Usage:
+      Reply to a photo with /setthumb -> Global thumbnail
+      Reply to a photo with /setthumb <series_slug> -> Anime-specific thumbnail
+      Reply to a photo with /setthumb <series_slug> <language> -> Language-specific thumbnail
+    """
+    from bot.database import db
+    rep = message.reply_to_message
+    file_id = None
+    if rep:
+        if rep.photo:
+            file_id = rep.photo.file_id
+        elif rep.document and rep.document.mime_type and rep.document.mime_type.startswith("image/"):
+            file_id = rep.document.file_id
+
+    if not file_id:
+        await message.reply_text(
+            "⚠️ <b>Please reply to an image/photo with:</b>\n\n"
+            "• <code>/setthumb</code> — Set global thumbnail for all video uploads\n"
+            "• <code>/setthumb &lt;series_slug&gt;</code> — Set thumbnail for a specific anime\n"
+            "• <code>/setthumb &lt;series_slug&gt; &lt;language&gt;</code> — Set thumbnail for a specific anime & language (e.g. hindi, tamil)",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    args = _parse_args(message)
+    thumb_type = "global"
+    key = ""
+
+    if len(args) == 1:
+        thumb_type = "series"
+        key = args[0].strip().lower()
+    elif len(args) >= 2:
+        thumb_type = "language"
+        key = f"{args[0].strip().lower()}_{args[1].strip().lower()}"
+
+    if db:
+        await db.set_custom_thumbnail(thumb_type, key, file_id)
+
+    scope_name = f"for anime <code>{key}</code>" if key else "<b>Globally</b> (all anime)"
+    await message.reply_text(
+        f"🖼 <b>Custom Thumbnail Saved!</b>\n\n• <b>Scope:</b> {scope_name}\n• <b>Type:</b> <code>{thumb_type}</code>",
+        parse_mode=enums.ParseMode.HTML,
+    )
+
+
+@require_owner
+async def cmd_delthumb(client: Client, message: Message):
+    """Delete configured custom thumbnail."""
+    from bot.database import db
+    args = _parse_args(message)
+    thumb_type = "global"
+    key = ""
+
+    if len(args) == 1:
+        thumb_type = "series"
+        key = args[0].strip().lower()
+    elif len(args) >= 2:
+        thumb_type = "language"
+        key = f"{args[0].strip().lower()}_{args[1].strip().lower()}"
+
+    if db:
+        deleted = await db.delete_custom_thumbnail(thumb_type, key)
+        if deleted:
+            await message.reply_text(f"✅ Removed custom thumbnail ({thumb_type}: <code>{key or 'global'}</code>). Will fall back to official poster.", parse_mode=enums.ParseMode.HTML)
+        else:
+            await message.reply_text(f"ℹ️ No custom thumbnail found for ({thumb_type}: <code>{key or 'global'}</code>).", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_viewthumb(client: Client, message: Message):
+    """View the currently active custom thumbnail."""
+    from bot.database import db
+    args = _parse_args(message)
+    series_slug = args[0].strip().lower() if len(args) > 0 else None
+    language = args[1].strip().lower() if len(args) > 1 else None
+
+    if not db:
+        return
+
+    thumb_id = await db.get_custom_thumbnail(series_slug=series_slug, language=language)
+    if thumb_id:
+        scope = f"{series_slug} ({language})" if series_slug and language else (series_slug or "Global")
+        await message.reply_photo(
+            photo=thumb_id,
+            caption=f"🖼 <b>Custom Thumbnail for:</b> <code>{scope}</code>",
+            parse_mode=enums.ParseMode.HTML,
+        )
+    else:
+        await message.reply_text("ℹ️ No custom thumbnail configured. Bot is using automatic official AniList / scraped posters by default.", parse_mode=enums.ParseMode.HTML)
+
+
+# ── Automatic Episode Monitoring (Point 1) ───────────────────────────
+
+@require_owner
+async def cmd_automonitor(client: Client, message: Message):
+    """
+    Manage automatic episode monitoring service (OFF by default).
+    Subcommands:
+      /automonitor on — Turn monitoring ON
+      /automonitor off — Turn monitoring OFF
+      /automonitor status — View current status
+      /automonitor interval <minutes> — Set check interval
+      /automonitor quality <quality> — Set download quality
+      /automonitor add <slug> [quality] — Add anime to watchlist
+      /automonitor del <slug> — Remove anime from watchlist
+      /automonitor list — List monitored series
+      /automonitor check — Run an immediate check cycle right now
+    """
+    from bot.database import db
+    from bot.monitor import monitor_service
+    args = _parse_args(message)
+
+    if not args:
+        # Show help and current status
+        enabled = await db.get_auto_monitor_enabled() if db else False
+        interval = await db.get_auto_monitor_interval() if db else 30
+        quality = await db.get_auto_monitor_quality() if db else "720p"
+        monitored = await db.list_monitored_series() if db else []
+
+        status_badge = "🟢 <b>ACTIVE (ON)</b>" if enabled else "🔴 <b>DISABLED (OFF by default)</b>"
+        text = (
+            f"🔄 <b>Automatic Episode Monitoring System</b>\n\n"
+            f"• <b>Status:</b> {status_badge}\n"
+            f"• <b>Check Interval:</b> <code>{interval} minutes</code>\n"
+            f"• <b>Target Quality:</b> <code>{quality.upper()}</code>\n"
+            f"• <b>Monitored Watchlist:</b> <code>{len(monitored)} series</code> (if 0, monitors all mapped channels)\n\n"
+            "<b>Commands:</b>\n"
+            "• <code>/automonitor on</code> — Turn monitoring ON\n"
+            "• <code>/automonitor off</code> — Turn monitoring OFF\n"
+            "• <code>/automonitor interval &lt;minutes&gt;</code> — Set check interval (min 5m)\n"
+            "• <code>/automonitor quality &lt;quality&gt;</code> — Set target quality (e.g. 720p, 1080p)\n"
+            "• <code>/automonitor add &lt;slug&gt; [quality]</code> — Add anime to watchlist\n"
+            "• <code>/automonitor del &lt;slug&gt;</code> — Remove anime from watchlist\n"
+            "• <code>/automonitor list</code> — List watchlist anime\n"
+            "• <code>/automonitor check</code> — Run an immediate check cycle now"
+        )
+        await message.reply_text(text, parse_mode=enums.ParseMode.HTML)
+        return
+
+    sub = args[0].strip().lower()
+
+    if sub in ("on", "enable", "start", "1"):
+        if db:
+            await db.set_auto_monitor_enabled(True)
+        await message.reply_text("🟢 <b>Auto-Monitor Enabled!</b> The bot will periodically check for new episode releases and upload them automatically.", parse_mode=enums.ParseMode.HTML)
+
+    elif sub in ("off", "disable", "stop", "0"):
+        if db:
+            await db.set_auto_monitor_enabled(False)
+        await message.reply_text("🔴 <b>Auto-Monitor Disabled.</b> Background checks stopped.", parse_mode=enums.ParseMode.HTML)
+
+    elif sub in ("status", "info"):
+        enabled = await db.get_auto_monitor_enabled() if db else False
+        interval = await db.get_auto_monitor_interval() if db else 30
+        quality = await db.get_auto_monitor_quality() if db else "720p"
+        monitored = await db.list_monitored_series() if db else []
+        last_run = monitor_service._last_run_time
+        last_str = datetime.fromtimestamp(last_run, tz=timezone.utc).strftime("%H:%M:%S UTC") if last_run else "Never"
+
+        text = (
+            f"🔄 <b>Auto-Monitor Status:</b> {'🟢 ON' if enabled else '🔴 OFF'}\n"
+            f"• <b>Interval:</b> {interval} mins\n"
+            f"• <b>Quality:</b> {quality.upper()}\n"
+            f"• <b>Monitored Series:</b> {len(monitored)}\n"
+            f"• <b>Last Check:</b> {last_str}"
+        )
+        await message.reply_text(text, parse_mode=enums.ParseMode.HTML)
+
+    elif sub == "interval" and len(args) > 1 and args[1].isdigit():
+        mins = int(args[1])
+        if db:
+            await db.set_auto_monitor_interval(mins)
+        await message.reply_text(f"⏱ <b>Auto-Monitor interval updated to {max(5, mins)} minutes.</b>", parse_mode=enums.ParseMode.HTML)
+
+    elif sub == "quality" and len(args) > 1:
+        q_val = args[1].strip()
+        if db:
+            await db.set_auto_monitor_quality(q_val)
+        await message.reply_text(f"🎬 <b>Auto-Monitor default quality set to {q_val.upper()}.</b>", parse_mode=enums.ParseMode.HTML)
+
+    elif sub == "add" and len(args) > 1:
+        slug = args[1].strip()
+        q_target = args[2].strip() if len(args) > 2 else ""
+        if db:
+            await db.add_monitored_series(slug, quality=q_target)
+        await message.reply_text(f"✅ Added <code>{slug}</code> to auto-monitor watchlist (Quality: {q_target.upper() or 'Default'}).", parse_mode=enums.ParseMode.HTML)
+
+    elif sub == "del" and len(args) > 1:
+        slug = args[1].strip()
+        if db:
+            del_ok = await db.remove_monitored_series(slug)
+            if del_ok:
+                await message.reply_text(f"✅ Removed <code>{slug}</code> from auto-monitor watchlist.", parse_mode=enums.ParseMode.HTML)
+            else:
+                await message.reply_text(f"ℹ️ <code>{slug}</code> was not in the watchlist.", parse_mode=enums.ParseMode.HTML)
+
+    elif sub == "list":
+        monitored = await db.list_monitored_series() if db else []
+        if not monitored:
+            await message.reply_text("📋 <b>Watchlist is empty.</b> (When enabled, bot will monitor all mapped anime series channels).", parse_mode=enums.ParseMode.HTML)
+            return
+        lines = [f"• <code>{m['series_slug']}</code> [{m.get('quality', 'Default').upper()}]" for m in monitored]
+        await message.reply_text(f"📋 <b>Auto-Monitored Series ({len(monitored)}):</b>\n\n" + "\n".join(lines), parse_mode=enums.ParseMode.HTML)
+
+    elif sub == "check":
+        p_msg = await message.reply_text("🔍 <i>Running manual episode check cycle...</i>", parse_mode=enums.ParseMode.HTML)
+        res = await monitor_service.run_check_cycle()
+        await p_msg.edit_text(
+            f"✅ <b>Episode Check Completed!</b>\n\n"
+            f"• <b>Series Checked:</b> {res['checked']}\n"
+            f"• <b>New Episodes Detected & Uploaded:</b> {res['new_episodes']}\n"
+            f"• <b>Errors:</b> {res['errors']}",
+            parse_mode=enums.ParseMode.HTML,
+        )
+
+    else:
+        await message.reply_text("Usage: <code>/automonitor &lt;on|off|status|interval|quality|add|del|list|check&gt;</code>", parse_mode=enums.ParseMode.HTML)
+
+
+# ── Post Style Configuration (Point 6) ───────────────────────────────
+
+@require_owner
+async def cmd_poststyle(client: Client, message: Message):
+    """
+    Configure poster album display style in main channel.
+    Usage:
+      /poststyle classic (default format)
+      /poststyle modern (styled box-drawing format with metadata)
+    """
+    from bot.database import db
+    args = _parse_args(message)
+    if not args:
+        cur_style = await db.get_post_style() if db else "classic"
+        await message.reply_text(
+            f"🎨 <b>Channel Post Style Settings</b>\n\n"
+            f"• <b>Current Style:</b> <code>{cur_style.upper()}</code>\n\n"
+            f"<b>Options:</b>\n"
+            f"• <code>/poststyle classic</code> — Standard original post caption\n"
+            f"• <code>/poststyle modern</code> — Modern stylish card with rating, genres, duration & status\n\n"
+            f"<i>Default is classic.</i>",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    chosen = args[0].strip().lower()
+    if chosen in ("modern", "new", "stylish"):
+        if db:
+            await db.set_post_style("modern")
+        await message.reply_text("✅ <b>Post Style set to MODERN!</b> Channel album posts will use the new styled metadata card layout.", parse_mode=enums.ParseMode.HTML)
+    else:
+        if db:
+            await db.set_post_style("classic")
+        await message.reply_text("✅ <b>Post Style set to CLASSIC!</b> Channel album posts will use the standard default layout.", parse_mode=enums.ParseMode.HTML)
+

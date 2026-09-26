@@ -106,6 +106,42 @@ Built with **WZGram (High-Performance MTProto Fork with WarpCrypto)** for **2GB 
 - **Broadcast System** — Broadcast text (`/broadcast`), photos (`/pbroadcast`), or files/videos (`/dbroadcast`) with real-time live progress edits.
 - **Global User Moderation** — Ban (`/ban <id> [reason]`) and unban (`/uban <id>` or `/unban <id>`) users network-wide.
 
+### 🔄 Automatic New Episode Monitoring (OFF by default)
+- **Background Watcher** — Periodically checks provider streams for newly released episodes without any manual user intervention.
+- **Auto-Pipeline** — Detect new episode → Select configured resolution → Download → Cache in Dump Channel (if set) → Upload to mapped anime channel → Update album poster.
+- **Completely OFF by Default** — Disabled until the owner turns it on using `/automonitor on`.
+- **Configurable Settings** — Adjust check interval (`/automonitor interval <minutes>`), target quality (`/automonitor quality <quality>`), and watchlist (`/automonitor add/del`).
+
+### 📅 Anime Airing Schedule System
+- **Real-Time Airing Timetable** — Built-in schedule viewer (`/schedule`) powered by the AniList AiringSchedule GraphQL engine with release countdowns and Indian Standard Time (IST) formatting.
+- **Three Viewing Modes**:
+  - 📌 **Today's Anime**: Releases airing today.
+  - 📆 **Weekly Timetable**: Browse day-by-day (Monday through Sunday) with interactive inline day buttons.
+  - 🔜 **Upcoming Anime**: Releases scheduled for the next 48 hours.
+- **Rich Anime Cards** — High-resolution cover artwork, title (Romaji & English), airing episode number, exact countdown (e.g. `in 3h 15m`), IST time, genres, and community score.
+
+### 📺 Advanced Multi-Channel Mapping & Language Routing
+- **Multi-Channel Distribution** — Route the same anime to different channels based on language (e.g. Demon Slayer Hindi → Hindi Channel, Demon Slayer Tamil → Tamil Channel, Demon Slayer Multi → Multi Channel).
+- **Flexible Mapping** — `/mapchannel <slug> <channel_id> [language]` to bind language-specific channels.
+- **Fallback to Default** — If no language-specific route is configured, seamlessly uploads to the primary series channel as before.
+
+### 💾 Dump / Storage Channel (OFF by default)
+- **Centralized Media Cache** — Configure a master storage/dump channel (`/setdump <channel_id>`).
+- **Zero Re-Downloading** — Downloaded video files are stored in the dump channel first. Target mapped channels and private user chats are delivered instantly via cached Telegram `file_id` without downloading the same file multiple times.
+- **OFF by Default** — Disabled unless explicitly set with `/setdump`.
+
+### 🖼️ Custom Thumbnail System (OFF by default)
+- **Multi-Level Thumbnail Precedence**:
+  1. Per-anime language thumbnail: `/setthumb <series_slug> <language>` (reply to image)
+  2. Per-anime thumbnail: `/setthumb <series_slug>` (reply to image)
+  3. Global thumbnail: `/setthumb` (reply to image)
+  4. Automatic fallback: Official AniList HD key visual / scraped poster (existing default behavior).
+- **Inspection & Cleanup** — `/viewthumb [slug] [language]` to preview and `/delthumb` to remove.
+
+### 🎨 Channel Post Style (`/poststyle`)
+- **Modern Box Layout (`/poststyle modern`)** — Formats channel album cards with the stylish ASCII box-drawing card layout, including Type, Duration, Rating, Status, Episodes count, Season, Genres, and Channel deep link.
+- **Classic Post Format (`/poststyle classic`)** — The traditional clean caption style (default).
+
 ---
 
 ## Bot Commands
@@ -116,10 +152,28 @@ Built with **WZGram (High-Performance MTProto Fork with WarpCrypto)** for **2GB 
 | Any text | Search for anime series or movies |
 | `/start` | Open the main menu |
 | `/search <query>` | Search anime by title |
+| `/schedule` | View Today's, Weekly, and Upcoming anime release schedule |
 | `/help` | Show user help message |
 | `/tutorial` | View complete bot guide and tutorials |
 
 ### 👑 Owner & Admin Commands
+
+#### Monitoring, Storage Dump & Post Style (Issue #4)
+| Command | Description |
+| :--- | :--- |
+| `/automonitor <on\|off>` | Toggle automatic episode monitoring ON or OFF (OFF by default) |
+| `/automonitor status` | View monitoring status, interval, quality, and watchlist count |
+| `/automonitor interval <m>` | Set check interval in minutes (default 30m, min 5m) |
+| `/automonitor quality <q>` | Set target download quality for auto-monitoring (default 720p) |
+| `/automonitor add <slug> [q]` | Add anime series to auto-monitor watchlist |
+| `/automonitor del <slug>` | Remove anime series from auto-monitor watchlist |
+| `/automonitor list` | List all watched anime series |
+| `/automonitor check` | Run an immediate check cycle manually |
+| `/setdump <channel_id>` | Set dump/storage channel (`/setdump off` to disable) |
+| `/setthumb [slug] [lang]` | Set global, anime-specific, or language-specific custom thumbnail (reply to photo) |
+| `/delthumb [slug] [lang]` | Remove custom thumbnail |
+| `/viewthumb [slug] [lang]` | View active custom thumbnail |
+| `/poststyle <classic\|modern>` | Toggle channel poster caption style (classic default / modern card) |
 
 #### VPS Stats & Analytics
 | Command | Description |

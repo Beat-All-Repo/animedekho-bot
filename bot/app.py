@@ -117,6 +117,11 @@ async def _on_start(client: Client):
     auto_delete_service.start(client)
     log.info("Auto-Delete service started")
 
+    # Init Episode Monitor Service (OFF by default)
+    from bot.monitor import monitor_service
+    monitor_service.start(client)
+    log.info("Episode Monitor Service started (OFF by default)")
+
     # Set bot commands menu
     from bot.telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
     try:
@@ -124,6 +129,7 @@ async def _on_start(client: Client):
         await client.set_bot_commands([
             BotCommand("start", "Main menu"),
             BotCommand("search", "Search anime or movies"),
+            BotCommand("schedule", "Anime airing schedule"),
             BotCommand("help", "Show help message"),
         ], scope=BotCommandScopeDefault())
 
@@ -132,6 +138,7 @@ async def _on_start(client: Client):
             await client.set_bot_commands([
                 BotCommand("start", "Main menu"),
                 BotCommand("search", "Search anime or movies"),
+                BotCommand("schedule", "Anime airing schedule"),
                 BotCommand("ai", "Autonomous AI Agent"),
                 BotCommand("setai", "Configure AI model, key & persona"),
                 BotCommand("help", "Show help message"),
@@ -142,6 +149,11 @@ async def _on_start(client: Client):
                 BotCommand("fsub", "Manage Force Subscribe channel"),
                 BotCommand("fsub_mod", "Toggle 2-min timer FSub links"),
                 BotCommand("dlt_time", "Configure file auto-delete timer"),
+                BotCommand("setdump", "Configure dump storage channel"),
+                BotCommand("setthumb", "Set custom thumbnail for uploads"),
+                BotCommand("delthumb", "Delete custom thumbnail"),
+                BotCommand("automonitor", "Automatic episode monitoring"),
+                BotCommand("poststyle", "Toggle channel post style (classic/modern)"),
                 BotCommand("tutorial", "Bot network guide & tutorials"),
                 BotCommand("broadcast", "Broadcast text to all users"),
                 BotCommand("pbroadcast", "Broadcast photo to all users"),
@@ -173,6 +185,8 @@ async def _on_start(client: Client):
 
 async def _on_stop(client: Client):
     """Called on shutdown — cleanup."""
+    from bot.monitor import monitor_service
+    await monitor_service.stop()
     from bot.auto_delete import auto_delete_service
     await auto_delete_service.stop()
     from bot.userbot import userbot_manager

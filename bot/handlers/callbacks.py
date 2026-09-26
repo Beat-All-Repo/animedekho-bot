@@ -669,13 +669,20 @@ async def _handle_batch_download(client: Client, q: CallbackQuery, slug: str, se
     )
 
 
-async def _resolve_destination_channel(series_slug: str, series_title: str = "", poster_url: str = "") -> int | None:
-    """Check if series has a mapped channel or auto-create one if enabled."""
+async def _resolve_destination_channel(series_slug: str, series_title: str = "", poster_url: str = "", language: str = "") -> int | None:
+    """Check if series has a mapped channel (including language routes) or auto-create one if enabled."""
     from bot.database import db
     if not db or not series_slug:
         return None
     try:
-        mapping = await db.get_channel_mapping(series_slug)
+        if not language and series_title:
+            t_low = series_title.lower()
+            for l_cand in ("hindi", "tamil", "telugu", "multi", "english"):
+                if l_cand in t_low:
+                    language = l_cand
+                    break
+
+        mapping = await db.get_channel_mapping(series_slug, language=language)
         if not mapping:
             auto_chan = await db.get_config("auto_channel_creation", default=False)
             from bot.userbot import userbot_manager

@@ -595,26 +595,53 @@ async def download_and_upload(
     referer: str = "",
     poster_url: str = "",
     destination_channel_id: int | None = None,
+    series_slug: str = "",
+    language: str = "",
 ) -> tuple[bool, Message | None]:
-    """Download video + upload via Pyrogram MTProto with progress and poster thumbnail."""
+    """Download video + upload via Pyrogram MTProto with progress, custom thumbnail, and dump channel."""
     output_path = str(_TEMP_BASE / filename)
     overall_start = time.time()
     thumb_path = None
+    custom_thumb_path = None
 
     try:
-        if not poster_url:
+        # 1. Custom Thumbnail System (Point 5 - OFF by default, falls back to AniList poster)
+        from bot.database import db
+        if db:
             try:
-                from utils.anilist import resolve_best_poster
-                poster_url = await resolve_best_poster(title, "")
-            except Exception:
-                pass
+                # Detect language if not specified
+                if not language and title:
+                    t_low = title.lower()
+                    for l_candidate in ("hindi", "tamil", "telugu", "multi", "english"):
+                        if l_candidate in t_low:
+                            language = l_candidate
+                            break
+                custom_thumb_id = await db.get_custom_thumbnail(series_slug=series_slug, language=language)
+                if custom_thumb_id:
+                    c_path = str(_TEMP_BASE / f"thumb_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg")
+                    dl_res = await client.download_media(custom_thumb_id, file_name=c_path)
+                    if dl_res and os.path.exists(str(dl_res)):
+                        thumb_path = str(dl_res)
+                        custom_thumb_path = thumb_path
+                        log.info("Using custom thumbnail for %s (type: %s)", title, language or series_slug or "global")
+            except Exception as cte:
+                log.debug("Custom thumbnail check failed: %s", cte)
 
-        if poster_url:
-            try:
-                from bot.library import _download_poster
-                thumb_path = await _download_poster(poster_url)
-            except Exception as pe:
-                log.debug("Poster thumbnail download failed: %s", pe)
+        # 2. Poster Fallback (existing behavior)
+        if not thumb_path:
+            if not poster_url:
+                try:
+                    from utils.anilist import resolve_best_poster
+                    poster_url = await resolve_best_poster(title, "")
+                except Exception:
+                    pass
+
+            if poster_url:
+                try:
+                    from bot.library import _download_poster
+                    thumb_path = await _download_poster(poster_url)
+                except Exception as pe:
+                    log.debug("Poster thumbnail download failed: %s", pe)
 
         success = await download_media(
             stream_url, quality, output_path, progress_msg, title, variant_url=variant_url, referer=referer
@@ -707,27 +734,61 @@ async def download_and_upload(
             f"└ 🔄 Starting upload...",
             parse_mode=enums.ParseMode.HTML)
 
-        try:
-            sent_msg = await client.send_document(
-                chat_id=target_upload_chat,
-                document=output_path,
-                thumb=thumb_path,
-                file_name=filename,
-                caption=f"📺 {title} [{quality}]",
-                progress=_upload_progress,
-            )
-        except Exception as te:
-            if thumb_path:
-                log.warning("Upload with thumb failed, retrying without thumb: %s", te)
+        # Dump / Storage Channel (Point 4 - OFF by default unless configured)
+        from bot.database import db
+        dump_channel_id = await db.get_dump_channel() if db else None
+
+        sent_msg = None
+        if dump_channel_id and target_upload_chat != dump_channel_id:
+            try:
+                await progress_msg.edit_text(
+                    f"📤 <b>Uploading to Dump Channel</b>\n"
+                    f"┌ 📺 {title}\n"
+                    f"├ 🎬 Quality: {quality}\n"
+                    f"├ 💾 Size: {_format_size(file_size)}\n"
+                    f"└ 🔄 Storing media in cache...",
+                    parse_mode=enums.ParseMode.HTML)
+                dump_msg = await client.send_document(
+                    chat_id=dump_channel_id,
+                    document=output_path,
+                    thumb=thumb_path,
+                    file_name=filename,
+                    caption=f"📺 {title} [{quality}] #dump",
+                    progress=_upload_progress,
+                )
+                if dump_msg:
+                    fid = dump_msg.video.file_id if dump_msg.video else (dump_msg.document.file_id if dump_msg.document else None)
+                    if fid:
+                        sent_msg = await client.send_document(
+                            chat_id=target_upload_chat,
+                            document=fid,
+                            caption=f"📺 {title} [{quality}]",
+                        )
+            except Exception as de:
+                log.warning("Dump channel upload failed, falling back to direct upload: %s", de)
+
+        if not sent_msg:
+            try:
                 sent_msg = await client.send_document(
                     chat_id=target_upload_chat,
                     document=output_path,
+                    thumb=thumb_path,
                     file_name=filename,
                     caption=f"📺 {title} [{quality}]",
                     progress=_upload_progress,
                 )
-            else:
-                raise
+            except Exception as te:
+                if thumb_path:
+                    log.warning("Upload with thumb failed, retrying without thumb: %s", te)
+                    sent_msg = await client.send_document(
+                        chat_id=target_upload_chat,
+                        document=output_path,
+                        file_name=filename,
+                        caption=f"📺 {title} [{quality}]",
+                        progress=_upload_progress,
+                    )
+                else:
+                    raise
 
         user_file_msg = None
         # If uploaded to dedicated channel and chat_id is user PM, send file to user via file_id

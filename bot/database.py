@@ -28,6 +28,8 @@ class Database:
         self.bot_users = self.db["bot_users"]
         self.banned_users = self.db["banned_users"]
         self.auto_delete_jobs = self.db["auto_delete_jobs"]
+        self.custom_thumbnails = self.db["custom_thumbnails"]
+        self.monitored_series = self.db["monitored_series"]
 
     async def init_indexes(self):
         """Create necessary indexes."""
@@ -55,6 +57,8 @@ class Database:
         await self.banned_users.create_index("user_id", unique=True)
         await self.auto_delete_jobs.create_index([("delete_at", 1)])
         await self.auto_delete_jobs.create_index([("chat_id", 1), ("message_id", 1)], unique=True)
+        await self.custom_thumbnails.create_index([("thumb_type", 1), ("key", 1)], unique=True)
+        await self.monitored_series.create_index("series_slug", unique=True)
         log.info("MongoDB indexes created")
 
     # ── User management ───────────────────────────────────────────
@@ -460,10 +464,24 @@ class Database:
 
     # ── Channel Mappings & Userbot Session ──────────────────────────
 
-    async def get_channel_mapping(self, series_slug: str) -> dict | None:
-        """Get mapped channel information for a series slug."""
+    async def get_channel_mapping(self, series_slug: str, language: str | None = None) -> dict | None:
+        """Get mapped channel information for a series slug, with optional language-specific routing."""
         try:
-            return await self.channel_mappings.find_one({"series_slug": series_slug})
+            doc = await self.channel_mappings.find_one({"series_slug": series_slug})
+            if not doc:
+                return None
+            if language:
+                lang_clean = language.strip().lower()
+                routes = doc.get("language_routes", {})
+                if lang_clean in routes:
+                    r = routes[lang_clean]
+                    return {
+                        **doc,
+                        "channel_id": r.get("channel_id", doc.get("channel_id")),
+                        "invite_link": r.get("invite_link", doc.get("invite_link")),
+                        "language": lang_clean,
+                    }
+            return doc
         except Exception as e:
             log.warning("Failed to get channel mapping for %s: %s", series_slug, e)
             return None
@@ -477,28 +495,61 @@ class Database:
         poster_url: str = "",
         auto_created: bool = False,
         created_by: int = 0,
+        language: str = "",
     ) -> dict:
-        """Upsert a channel mapping for an anime series."""
+        """Upsert a channel mapping for an anime series, supporting optional language routing."""
         now = datetime.now(timezone.utc).isoformat()
-        doc = {
-            "series_slug": series_slug,
-            "series_title": series_title or series_slug,
-            "channel_id": channel_id,
-            "invite_link": invite_link,
-            "poster_url": poster_url,
-            "auto_created": auto_created,
-            "created_by": created_by,
-            "updated_at": now,
-        }
-        await self.channel_mappings.update_one(
-            {"series_slug": series_slug},
-            {
-                "$set": doc,
-                "$setOnInsert": {"created_at": now},
-            },
-            upsert=True,
-        )
-        return doc
+        lang_clean = language.strip().lower() if language else ""
+
+        if lang_clean:
+            route_entry = {
+                "channel_id": channel_id,
+                "invite_link": invite_link,
+                "language": lang_clean,
+                "updated_at": now,
+            }
+            await self.channel_mappings.update_one(
+                {"series_slug": series_slug},
+                {
+                    "$set": {
+                        f"language_routes.{lang_clean}": route_entry,
+                        "updated_at": now,
+                    },
+                    "$setOnInsert": {
+                        "series_slug": series_slug,
+                        "series_title": series_title or series_slug,
+                        "channel_id": channel_id,
+                        "invite_link": invite_link,
+                        "poster_url": poster_url,
+                        "auto_created": auto_created,
+                        "created_by": created_by,
+                        "created_at": now,
+                    },
+                },
+                upsert=True,
+            )
+            doc = await self.channel_mappings.find_one({"series_slug": series_slug})
+            return doc or {}
+        else:
+            doc = {
+                "series_slug": series_slug,
+                "series_title": series_title or series_slug,
+                "channel_id": channel_id,
+                "invite_link": invite_link,
+                "poster_url": poster_url,
+                "auto_created": auto_created,
+                "created_by": created_by,
+                "updated_at": now,
+            }
+            await self.channel_mappings.update_one(
+                {"series_slug": series_slug},
+                {
+                    "$set": doc,
+                    "$setOnInsert": {"created_at": now},
+                },
+                upsert=True,
+            )
+            return doc
 
     async def list_channel_mappings(self) -> list[dict]:
         """List all mapped channels."""
@@ -509,9 +560,16 @@ class Database:
             log.warning("Failed to list channel mappings: %s", e)
             return []
 
-    async def delete_channel_mapping(self, series_slug: str) -> bool:
-        """Remove a channel mapping."""
+    async def delete_channel_mapping(self, series_slug: str, language: str = "") -> bool:
+        """Remove a channel mapping or a specific language route."""
         try:
+            lang_clean = language.strip().lower() if language else ""
+            if lang_clean:
+                res = await self.channel_mappings.update_one(
+                    {"series_slug": series_slug},
+                    {"$unset": {f"language_routes.{lang_clean}": ""}}
+                )
+                return res.modified_count > 0
             res = await self.channel_mappings.delete_one({"series_slug": series_slug})
             return res.deleted_count > 0
         except Exception as e:
@@ -786,6 +844,145 @@ class Database:
     async def set_dlt_time(self, seconds: int):
         """Set file auto-delete time in seconds (0 = disabled)."""
         await self.set_config("dlt_time", max(0, int(seconds)))
+
+    # ── Dump / Storage Channel (OFF by default) ──────────────────────
+
+    async def get_dump_channel(self) -> int | None:
+        """Get dump/storage channel ID if configured, else None (OFF by default)."""
+        val = await self.get_config("dump_channel", default=None)
+        if val is not None and str(val).lstrip("-").isdigit():
+            return int(val)
+        return None
+
+    async def set_dump_channel(self, channel_id: int | None):
+        """Set or disable dump/storage channel (None disables it)."""
+        if channel_id:
+            await self.set_config("dump_channel", int(channel_id))
+        else:
+            await self.set_config("dump_channel", None)
+
+    # ── Custom Thumbnail System (OFF by default, falls back to poster) ──
+
+    async def set_custom_thumbnail(self, thumb_type: str, key: str, file_id: str):
+        """Save a custom thumbnail (type: 'global', 'series', or 'language')."""
+        await self.custom_thumbnails.update_one(
+            {"thumb_type": thumb_type, "key": key.lower()},
+            {"$set": {"file_id": file_id, "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+
+    async def get_custom_thumbnail(self, series_slug: str | None = None, language: str | None = None) -> str | None:
+        """
+        Resolve custom thumbnail with precedence:
+        1. language-specific: (series_slug, language)
+        2. series-specific: series_slug
+        3. global
+        Returns file_id or None (OFF by default, falls back to poster).
+        """
+        try:
+            if series_slug and language:
+                doc = await self.custom_thumbnails.find_one({"thumb_type": "language", "key": f"{series_slug}_{language}".lower()})
+                if doc:
+                    return doc.get("file_id")
+            if series_slug:
+                doc = await self.custom_thumbnails.find_one({"thumb_type": "series", "key": series_slug.lower()})
+                if doc:
+                    return doc.get("file_id")
+            doc = await self.custom_thumbnails.find_one({"thumb_type": "global"})
+            if doc:
+                return doc.get("file_id")
+        except Exception as e:
+            log.warning("Failed to get custom thumbnail: %s", e)
+        return None
+
+    async def delete_custom_thumbnail(self, thumb_type: str, key: str = "") -> bool:
+        """Delete custom thumbnail."""
+        res = await self.custom_thumbnails.delete_one({"thumb_type": thumb_type, "key": key.lower()})
+        return res.deleted_count > 0
+
+    async def list_custom_thumbnails(self) -> list[dict]:
+        """List all configured custom thumbnails."""
+        return await self.custom_thumbnails.find().to_list(length=100)
+
+    # ── Post Style Configuration (Default: 'classic') ────────────────
+
+    async def get_post_style(self) -> str:
+        """Get poster post style ('classic' or 'modern'). Default is 'classic'."""
+        val = await self.get_config("post_style", default="classic")
+        return str(val) if val else "classic"
+
+    async def set_post_style(self, style: str):
+        """Set poster post style ('classic' or 'modern')."""
+        clean_style = "modern" if style.strip().lower() == "modern" else "classic"
+        await self.set_config("post_style", clean_style)
+
+    # ── Auto Episode Monitoring (OFF by default) ─────────────────────
+
+    async def get_auto_monitor_enabled(self) -> bool:
+        """Check if auto episode monitoring is enabled (OFF by default)."""
+        val = await self.get_config("auto_monitor_enabled", default=False)
+        return bool(val)
+
+    async def set_auto_monitor_enabled(self, enabled: bool):
+        """Toggle auto episode monitoring ON or OFF."""
+        await self.set_config("auto_monitor_enabled", bool(enabled))
+
+    async def get_auto_monitor_interval(self) -> int:
+        """Get auto-monitor check interval in minutes (default 30 mins)."""
+        val = await self.get_config("auto_monitor_interval", default=30)
+        return int(val) if val else 30
+
+    async def set_auto_monitor_interval(self, minutes: int):
+        """Set auto-monitor interval in minutes (minimum 5 mins)."""
+        await self.set_config("auto_monitor_interval", max(5, int(minutes)))
+
+    async def get_auto_monitor_quality(self) -> str:
+        """Get default download quality for auto-monitoring (default '720p')."""
+        val = await self.get_config("auto_monitor_quality", default="720p")
+        return str(val) if val else "720p"
+
+    async def set_auto_monitor_quality(self, quality: str):
+        """Set default download quality for auto-monitoring."""
+        await self.set_config("auto_monitor_quality", quality.strip().lower())
+
+    async def add_monitored_series(self, series_slug: str, series_title: str = "", quality: str = "", channel_id: int | None = None) -> dict:
+        """Add an anime series to the auto-monitoring watchlist."""
+        now = datetime.now(timezone.utc).isoformat()
+        doc = {
+            "series_slug": series_slug,
+            "series_title": series_title or series_slug,
+            "quality": quality,
+            "channel_id": channel_id,
+            "enabled": True,
+            "last_checked": None,
+            "last_episode_count": 0,
+            "created_at": now,
+        }
+        await self.monitored_series.update_one(
+            {"series_slug": series_slug},
+            {"$set": doc},
+            upsert=True,
+        )
+        return doc
+
+    async def remove_monitored_series(self, series_slug: str) -> bool:
+        """Remove a series from auto-monitoring."""
+        res = await self.monitored_series.delete_one({"series_slug": series_slug})
+        return res.deleted_count > 0
+
+    async def list_monitored_series(self) -> list[dict]:
+        """List all series in auto-monitoring watchlist."""
+        return await self.monitored_series.find({"enabled": True}).to_list(length=200)
+
+    async def update_monitored_series_check(self, series_slug: str, episode_count: int):
+        """Update last check time and episode count for a monitored series."""
+        await self.monitored_series.update_one(
+            {"series_slug": series_slug},
+            {"$set": {
+                "last_checked": datetime.now(timezone.utc).isoformat(),
+                "last_episode_count": episode_count,
+            }}
+        )
 
     async def ping_database(self) -> float:
         """Ping MongoDB and return round-trip latency in milliseconds."""

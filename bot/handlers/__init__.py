@@ -11,6 +11,7 @@ from .admin import (
     cmd_login, cmd_logout, cmd_userbot, cmd_cancel, cmd_autochannel,
     cmd_albummode, cmd_createchannel, cmd_mapchannel, cmd_unmapchannel, cmd_channels,
     cmd_health, cmd_logs, cmd_errors, cmd_clearerrors, health_callback,
+    cmd_setdump, cmd_setthumb, cmd_delthumb, cmd_viewthumb, cmd_automonitor, cmd_poststyle,
 )
 from .admin_ai import cmd_setai, cmd_ai
 from .worker_admin import (
@@ -19,6 +20,7 @@ from .worker_admin import (
     cmd_fsub, cmd_fsub_mod, cmd_dlt_time, cmd_tutorial,
     dlt_time_callback, toggle_fsub_mod_callback,
 )
+from .schedule import cmd_schedule, schedule_callback
 from bot.auto_delete import handle_close_dlt_notice
 
 __all__ = [
@@ -34,6 +36,8 @@ __all__ = [
     "cmd_stats", "cmd_users_count", "cmd_ban", "cmd_unban",
     "cmd_broadcast", "cmd_pbroadcast", "cmd_dbroadcast",
     "cmd_fsub", "cmd_fsub_mod", "cmd_dlt_time", "cmd_tutorial",
+    "cmd_schedule", "schedule_callback",
+    "cmd_setdump", "cmd_setthumb", "cmd_delthumb", "cmd_viewthumb", "cmd_automonitor", "cmd_poststyle",
     "register_handlers",
 ]
 
@@ -62,6 +66,9 @@ def register_handlers(app: Client):
     app.add_handler(MessageHandler(cmd_setbotquality, filters.command("setbotquality") & filters.private))
     app.add_handler(MessageHandler(cmd_refreshalbums, filters.command("refreshalbums") & filters.private))
 
+    # Schedule command (public)
+    app.add_handler(MessageHandler(cmd_schedule, filters.command("schedule") & filters.private))
+
     # Worker Admin & Fleet Management commands
     app.add_handler(MessageHandler(cmd_stats, filters.command("stats") & filters.private))
     app.add_handler(MessageHandler(cmd_ban, filters.command("ban") & filters.private))
@@ -73,6 +80,14 @@ def register_handlers(app: Client):
     app.add_handler(MessageHandler(cmd_fsub_mod, filters.command("fsub_mod") & filters.private))
     app.add_handler(MessageHandler(cmd_dlt_time, filters.command("dlt_time") & filters.private))
     app.add_handler(MessageHandler(cmd_tutorial, filters.command("tutorial") & filters.private))
+
+    # Storage Dump, Custom Thumbnails, Auto-Monitor & Post Style
+    app.add_handler(MessageHandler(cmd_setdump, filters.command(["setdump", "dumpchannel"]) & filters.private))
+    app.add_handler(MessageHandler(cmd_setthumb, filters.command("setthumb") & filters.private))
+    app.add_handler(MessageHandler(cmd_delthumb, filters.command("delthumb") & filters.private))
+    app.add_handler(MessageHandler(cmd_viewthumb, filters.command("viewthumb") & filters.private))
+    app.add_handler(MessageHandler(cmd_automonitor, filters.command(["automonitor", "monitor"]) & filters.private))
+    app.add_handler(MessageHandler(cmd_poststyle, filters.command("poststyle") & filters.private))
 
     # Userbot & Channel mapping commands
     app.add_handler(MessageHandler(cmd_login, filters.command("login") & filters.private))
@@ -98,6 +113,7 @@ def register_handlers(app: Client):
     app.add_handler(CallbackQueryHandler(dlt_time_callback, filters.regex(r"^dlt:\d+$")))
     app.add_handler(CallbackQueryHandler(toggle_fsub_mod_callback, filters.regex(r"^toggle_fsub_mod$")))
     app.add_handler(CallbackQueryHandler(handle_close_dlt_notice, filters.regex(r"^close_dlt_notice$")))
+    app.add_handler(CallbackQueryHandler(schedule_callback, filters.regex(r"^sch:")))
 
     # Callback queries (inline buttons)
     app.add_handler(CallbackQueryHandler(callback_router))
