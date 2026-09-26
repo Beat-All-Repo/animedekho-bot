@@ -1,6 +1,6 @@
 from bot.telegram import Client, filters, MessageHandler, CallbackQueryHandler
 
-from .commands import cmd_start, cmd_help, cmd_search
+from .commands import cmd_start, cmd_help, cmd_search, start_callback
 from .callbacks import callback_router
 from .messages import handle_text
 from .admin import (
@@ -12,6 +12,7 @@ from .admin import (
     cmd_albummode, cmd_createchannel, cmd_mapchannel, cmd_unmapchannel, cmd_channels,
     cmd_health, cmd_logs, cmd_errors, cmd_clearerrors, health_callback,
     cmd_setdump, cmd_setthumb, cmd_delthumb, cmd_viewthumb, cmd_automonitor, cmd_poststyle,
+    cmd_startstyle, cmd_startpic, cmd_epstyle, cmd_schedstyle,
 )
 from .admin_ai import cmd_setai, cmd_ai
 from .worker_admin import (
@@ -38,6 +39,7 @@ __all__ = [
     "cmd_fsub", "cmd_fsub_mod", "cmd_dlt_time", "cmd_tutorial",
     "cmd_schedule", "schedule_callback",
     "cmd_setdump", "cmd_setthumb", "cmd_delthumb", "cmd_viewthumb", "cmd_automonitor", "cmd_poststyle",
+    "cmd_startstyle", "cmd_startpic", "cmd_epstyle", "cmd_schedstyle", "start_callback",
     "register_handlers",
 ]
 
@@ -81,13 +83,17 @@ def register_handlers(app: Client):
     app.add_handler(MessageHandler(cmd_dlt_time, filters.command("dlt_time") & filters.private))
     app.add_handler(MessageHandler(cmd_tutorial, filters.command("tutorial") & filters.private))
 
-    # Storage Dump, Custom Thumbnails, Auto-Monitor & Post Style
+    # Storage Dump, Custom Thumbnails, Auto-Monitor & UI Style Configurations
     app.add_handler(MessageHandler(cmd_setdump, filters.command(["setdump", "dumpchannel"]) & filters.private))
     app.add_handler(MessageHandler(cmd_setthumb, filters.command("setthumb") & filters.private))
     app.add_handler(MessageHandler(cmd_delthumb, filters.command("delthumb") & filters.private))
     app.add_handler(MessageHandler(cmd_viewthumb, filters.command("viewthumb") & filters.private))
     app.add_handler(MessageHandler(cmd_automonitor, filters.command(["automonitor", "monitor"]) & filters.private))
     app.add_handler(MessageHandler(cmd_poststyle, filters.command("poststyle") & filters.private))
+    app.add_handler(MessageHandler(cmd_startstyle, filters.command("startstyle") & filters.private))
+    app.add_handler(MessageHandler(cmd_startpic, filters.command("startpic") & filters.private))
+    app.add_handler(MessageHandler(cmd_epstyle, filters.command("epstyle") & filters.private))
+    app.add_handler(MessageHandler(cmd_schedstyle, filters.command("schedstyle") & filters.private))
 
     # Userbot & Channel mapping commands
     app.add_handler(MessageHandler(cmd_login, filters.command("login") & filters.private))
@@ -108,6 +114,7 @@ def register_handlers(app: Client):
     app.add_handler(MessageHandler(cmd_clearerrors, filters.command("clearerrors") & filters.private))
 
     # Specific callbacks (before general router)
+    app.add_handler(CallbackQueryHandler(start_callback, filters.regex(r"^start:")))
     app.add_handler(CallbackQueryHandler(health_callback, filters.regex(r"^health:")))
     app.add_handler(CallbackQueryHandler(delete_callback, filters.regex(r"^del:")))
     app.add_handler(CallbackQueryHandler(dlt_time_callback, filters.regex(r"^dlt:\d+$")))

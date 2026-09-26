@@ -158,7 +158,7 @@ Built with **WZGram (High-Performance MTProto Fork with WarpCrypto)** for **2GB 
 
 ### 👑 Owner & Admin Commands
 
-#### Monitoring, Storage Dump & Post Style (Issue #4)
+#### Monitoring, Storage Dump & UI Customization (Issue #4)
 | Command | Description |
 | :--- | :--- |
 | `/automonitor <on\|off>` | Toggle automatic episode monitoring ON or OFF (OFF by default) |
@@ -174,6 +174,10 @@ Built with **WZGram (High-Performance MTProto Fork with WarpCrypto)** for **2GB 
 | `/delthumb [slug] [lang]` | Remove custom thumbnail |
 | `/viewthumb [slug] [lang]` | View active custom thumbnail |
 | `/poststyle <classic\|modern>` | Toggle channel poster caption style (classic default / modern card) |
+| `/startstyle <classic\|modern>` | Toggle `/start` menu layout (classic default / modern anime card with About/Help) |
+| `/startpic <url\|reset>` | Configure custom banner photo for `/start` modern menu (or reply to photo) |
+| `/schedstyle <classic\|modern>` | Toggle `/schedule` layout (classic default / modern double-line box cards) |
+| `/epstyle <classic\|modern>` | Toggle episode upload post style (classic default / modern card with quality buttons) |
 
 #### VPS Stats & Analytics
 | Command | Description |

@@ -916,6 +916,50 @@ class Database:
         clean_style = "modern" if style.strip().lower() == "modern" else "classic"
         await self.set_config("post_style", clean_style)
 
+    # ── Start Style & Banner Configuration (Default: 'classic') ──────
+
+    async def get_start_style(self) -> str:
+        """Get /start UI style ('classic' or 'modern'). Default is 'classic'."""
+        val = await self.get_config("start_style", default="classic")
+        return str(val) if val else "classic"
+
+    async def set_start_style(self, style: str):
+        """Set /start UI style ('classic' or 'modern')."""
+        clean_style = "modern" if style.strip().lower() == "modern" else "classic"
+        await self.set_config("start_style", clean_style)
+
+    async def get_start_pic(self) -> str | None:
+        """Get custom image banner for /start modern UI."""
+        return await self.get_config("start_pic", default=None)
+
+    async def set_start_pic(self, pic: str | None):
+        """Set or remove custom image banner for /start modern UI."""
+        await self.set_config("start_pic", pic)
+
+    # ── Episode Post Style Configuration (Default: 'classic') ────────
+
+    async def get_ep_style(self) -> str:
+        """Get episode upload post style ('classic' or 'modern'). Default is 'classic'."""
+        val = await self.get_config("ep_style", default="classic")
+        return str(val) if val else "classic"
+
+    async def set_ep_style(self, style: str):
+        """Set episode upload post style ('classic' or 'modern')."""
+        clean_style = "modern" if style.strip().lower() == "modern" else "classic"
+        await self.set_config("ep_style", clean_style)
+
+    # ── Schedule Style Configuration (Default: 'classic') ────────────
+
+    async def get_sched_style(self) -> str:
+        """Get schedule UI style ('classic' or 'modern'). Default is 'classic'."""
+        val = await self.get_config("sched_style", default="classic")
+        return str(val) if val else "classic"
+
+    async def set_sched_style(self, style: str):
+        """Set schedule UI style ('classic' or 'modern')."""
+        clean_style = "modern" if style.strip().lower() == "modern" else "classic"
+        await self.set_config("sched_style", clean_style)
+
     # ── Auto Episode Monitoring (OFF by default) ─────────────────────
 
     async def get_auto_monitor_enabled(self) -> bool:

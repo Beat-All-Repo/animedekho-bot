@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from bot.telegram import Client, enums
-from bot.telegram.types import Message
+from bot.telegram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from api.models import Quality
 
@@ -580,6 +580,101 @@ async def download_media(
     return ok
 
 
+_GENRE_EMOJIS = {
+    "Action": "👊",
+    "Adventure": "🗺",
+    "Fantasy": "🌓",
+    "Drama": "🎭",
+    "Comedy": "😂",
+    "Romance": "❤️",
+    "Sci-Fi": "🚀",
+    "Supernatural": "⚔️",
+    "Mystery": "🔎",
+    "Suspense": "😱",
+    "Horror": "👻",
+    "Slice of Life": "🍃",
+    "Sports": "⚽",
+    "Thriller": "⚡",
+    "Psychological": "🧠",
+    "Mecha": "🤖",
+    "Music": "🎵",
+}
+
+
+async def _build_episode_caption_and_markup(
+    title: str,
+    quality: str,
+    series_slug: str,
+    client: Client,
+    target_chat: int,
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    import html as htmlmod
+    from bot.database import db
+    ep_style = await db.get_ep_style() if db else "classic"
+    if ep_style != "modern":
+        return f"📺 {title} [{quality}]", None
+
+    # Parse Series Title, Season, Episode
+    m = re.match(r"^(.*?)\s+[Ss](\d+)[Ee](\d+)", title)
+    if m:
+        s_title = m.group(1).strip()
+        season_num = int(m.group(2))
+        ep_num = int(m.group(3))
+    else:
+        s_title = title.split(" S")[0].strip() if " S" in title else title
+        season_num = 1
+        ep_num = 1
+
+    # Fetch AniList metadata for genres, status, total episodes
+    meta = None
+    try:
+        from utils.anilist import get_anilist_metadata
+        meta = await get_anilist_metadata(s_title)
+    except Exception:
+        pass
+
+    status = (meta.get("status") if meta else None) or "RELEASING"
+    total_eps = (meta.get("episodes") if meta else None) or 12
+    raw_genres = (meta.get("genres") if meta else None) or ["Action", "Adventure", "Fantasy"]
+
+    formatted_genres = []
+    for g in raw_genres[:3]:
+        emoji = _GENRE_EMOJIS.get(g, "✨")
+        clean_tag = re.sub(r'[^a-zA-Z0-9]', '', g)
+        formatted_genres.append(f"{emoji} #{clean_tag}")
+    genres_str = ", ".join(formatted_genres) or "✨ #Anime"
+
+    audio_str = "Multi Audio [ESub]"
+
+    bot_me = getattr(client, "me", None)
+    bname = bot_me.username if bot_me and bot_me.username else "animedekho"
+
+    caption = (
+        f"✦ <b>{htmlmod.escape(s_title)}</b> ✦\n"
+        f"Season {season_num:02d} • Episode {ep_num:02d}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"⬡ <b>Audio:</b> {audio_str}\n"
+        f"⬡ <b>Status:</b> {status}\n"
+        f"⬡ <b>Total Episodes:</b> {total_eps}\n\n"
+        f"✦ <b>Genres:</b> {genres_str}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"✦ <b>Powered By:</b> @{bname}"
+    )
+
+    slug = series_slug or re.sub(r'[^a-zA-Z0-9]+', '-', s_title).strip('-').lower()
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("480P ↗", url=f"https://t.me/{bname}?start=get_{slug}_480p_S{season_num}E{ep_num:02d}"),
+            InlineKeyboardButton("720P ↗", url=f"https://t.me/{bname}?start=get_{slug}_720p_S{season_num}E{ep_num:02d}"),
+        ],
+        [
+            InlineKeyboardButton("1080P ↗", url=f"https://t.me/{bname}?start=get_{slug}_1080p_S{season_num}E{ep_num:02d}"),
+            InlineKeyboardButton("HDRip ↗", url=f"https://t.me/{bname}?start=get_{slug}_auto_S{season_num}E{ep_num:02d}"),
+        ]
+    ])
+    return caption, markup
+
+
 # ── Main download + upload ────────────────────────────────────────────
 
 
@@ -738,6 +833,11 @@ async def download_and_upload(
         from bot.database import db
         dump_channel_id = await db.get_dump_channel() if db else None
 
+        # Build style-aware episode caption and quality buttons (Default: classic)
+        caption_text, markup_obj = await _build_episode_caption_and_markup(
+            title=title, quality=quality, series_slug=series_slug, client=client, target_chat=target_upload_chat
+        )
+
         sent_msg = None
         if dump_channel_id and target_upload_chat != dump_channel_id:
             try:
@@ -762,7 +862,8 @@ async def download_and_upload(
                         sent_msg = await client.send_document(
                             chat_id=target_upload_chat,
                             document=fid,
-                            caption=f"📺 {title} [{quality}]",
+                            caption=caption_text,
+                            reply_markup=markup_obj,
                         )
             except Exception as de:
                 log.warning("Dump channel upload failed, falling back to direct upload: %s", de)
@@ -774,7 +875,8 @@ async def download_and_upload(
                     document=output_path,
                     thumb=thumb_path,
                     file_name=filename,
-                    caption=f"📺 {title} [{quality}]",
+                    caption=caption_text,
+                    reply_markup=markup_obj,
                     progress=_upload_progress,
                 )
             except Exception as te:
@@ -784,7 +886,8 @@ async def download_and_upload(
                         chat_id=target_upload_chat,
                         document=output_path,
                         file_name=filename,
-                        caption=f"📺 {title} [{quality}]",
+                        caption=caption_text,
+                        reply_markup=markup_obj,
                         progress=_upload_progress,
                     )
                 else:

@@ -1282,3 +1282,127 @@ async def cmd_poststyle(client: Client, message: Message):
             await db.set_post_style("classic")
         await message.reply_text("✅ <b>Post Style set to CLASSIC!</b> Channel album posts will use the standard default layout.", parse_mode=enums.ParseMode.HTML)
 
+
+@require_owner
+async def cmd_startstyle(client: Client, message: Message):
+    """Configure /start command UI style ('classic' or 'modern'). Default is 'classic'."""
+    from bot.database import db
+    args = _parse_args(message)
+    if not args:
+        cur_style = await db.get_start_style() if db else "classic"
+        await message.reply_text(
+            f"🎨 <b>Start Menu UI Style Settings</b>\n\n"
+            f"• <b>Current Style:</b> <code>{cur_style.upper()}</code>\n\n"
+            f"<b>Options:</b>\n"
+            f"• <code>/startstyle classic</code> — Standard welcome text & menu keyboard\n"
+            f"• <code>/startstyle modern</code> — Modern stylish card with header image, blockquote & About/Help buttons\n\n"
+            f"<i>Default is classic.</i>",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    chosen = args[0].strip().lower()
+    if chosen in ("modern", "new", "stylish"):
+        if db:
+            await db.set_start_style("modern")
+        await message.reply_text("✅ <b>Start Style set to MODERN!</b> Users will receive the styled anime card and interactive buttons upon /start.", parse_mode=enums.ParseMode.HTML)
+    else:
+        if db:
+            await db.set_start_style("classic")
+        await message.reply_text("✅ <b>Start Style set to CLASSIC!</b> Users will receive the standard text welcome menu.", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_startpic(client: Client, message: Message):
+    """Set or reset custom image banner for /start modern UI."""
+    from bot.database import db
+    args = _parse_args(message)
+
+    photo_file_id = None
+    if message.reply_to_message and message.reply_to_message.photo:
+        photo_file_id = message.reply_to_message.photo.file_id
+
+    if not photo_file_id and not args:
+        cur_pic = await db.get_start_pic() if db else None
+        status = f"<code>{cur_pic[:60]}...</code>" if cur_pic else "<i>Default Anime Girl Banner</i>"
+        await message.reply_text(
+            f"🖼️ <b>Start Banner Settings</b>\n\n"
+            f"• <b>Current Banner:</b> {status}\n\n"
+            f"<b>Usage:</b>\n"
+            f"• Reply to any photo with <code>/startpic</code>\n"
+            f"• Or send <code>/startpic &lt;image_url&gt;</code>\n"
+            f"• Or send <code>/startpic reset</code> to restore default banner",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    if args and args[0].strip().lower() in ("reset", "clear", "default"):
+        if db:
+            await db.set_start_pic(None)
+        await message.reply_text("✅ <b>Start banner reset to default!</b>", parse_mode=enums.ParseMode.HTML)
+        return
+
+    target_pic = photo_file_id or args[0].strip()
+    if db:
+        await db.set_start_pic(target_pic)
+    await message.reply_text("✅ <b>Custom start banner saved!</b> It will be displayed when Modern Start Style is active.", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_epstyle(client: Client, message: Message):
+    """Configure episode upload post UI style ('classic' or 'modern'). Default is 'classic'."""
+    from bot.database import db
+    args = _parse_args(message)
+    if not args:
+        cur_style = await db.get_ep_style() if db else "classic"
+        await message.reply_text(
+            f"🎨 <b>Episode Upload Post Style Settings</b>\n\n"
+            f"• <b>Current Style:</b> <code>{cur_style.upper()}</code>\n\n"
+            f"<b>Options:</b>\n"
+            f"• <code>/epstyle classic</code> — Standard original post caption (e.g. 📺 Title [Quality])\n"
+            f"• <code>/epstyle modern</code> — Modern stylish card with Audio, Status, Total Episodes, Genre hashtags & quality buttons\n\n"
+            f"<i>Default is classic.</i>",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    chosen = args[0].strip().lower()
+    if chosen in ("modern", "new", "stylish"):
+        if db:
+            await db.set_ep_style("modern")
+        await message.reply_text("✅ <b>Episode Post Style set to MODERN!</b> Channel uploads will use the styled card layout with quality links.", parse_mode=enums.ParseMode.HTML)
+    else:
+        if db:
+            await db.set_ep_style("classic")
+        await message.reply_text("✅ <b>Episode Post Style set to CLASSIC!</b> Channel uploads will use the standard clean caption.", parse_mode=enums.ParseMode.HTML)
+
+
+@require_owner
+async def cmd_schedstyle(client: Client, message: Message):
+    """Configure anime schedule UI style ('classic' or 'modern'). Default is 'classic'."""
+    from bot.database import db
+    args = _parse_args(message)
+    if not args:
+        cur_style = await db.get_sched_style() if db else "classic"
+        await message.reply_text(
+            f"📅 <b>Anime Schedule UI Style Settings</b>\n\n"
+            f"• <b>Current Style:</b> <code>{cur_style.upper()}</code>\n\n"
+            f"<b>Options:</b>\n"
+            f"• <code>/schedstyle classic</code> — Standard list layout with weekly day tabs\n"
+            f"• <code>/schedstyle modern</code> — Stylish box-drawing cards with Today/Upcoming switch & Close button\n\n"
+            f"<i>Default is classic.</i>",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
+    chosen = args[0].strip().lower()
+    if chosen in ("modern", "new", "stylish"):
+        if db:
+            await db.set_sched_style("modern")
+        await message.reply_text("✅ <b>Schedule Style set to MODERN!</b> /schedule will display styled box-drawing cards with double-line borders.", parse_mode=enums.ParseMode.HTML)
+    else:
+        if db:
+            await db.set_sched_style("classic")
+        await message.reply_text("✅ <b>Schedule Style set to CLASSIC!</b> /schedule will display standard list layout.", parse_mode=enums.ParseMode.HTML)
+
+

@@ -44,6 +44,48 @@ async def cmd_start(client: Client, message: Message):
     if db:
         invite_link = await db.get_config("channel_invite_link")
 
+    start_style = await db.get_start_style() if db else "classic"
+
+    if start_style == "modern":
+        from bot.telegram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        first_name = user.first_name if user else "Friend"
+        user_mention = f"<a href='tg://user?id={user_id}'>{re.sub(r'[<>&]', '', first_name)}</a>" if user_id else (first_name or "Friend")
+
+        main_chan = await db.get_config("main_channel_link") or invite_link or "https://t.me/animedekho"
+        modern_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("• ⚡ MAIN CHANNEL • ↗", url=main_chan)],
+            [
+                InlineKeyboardButton("• ABOUT •", callback_data="start:about"),
+                InlineKeyboardButton("HELP •", callback_data="start:help"),
+            ]
+        ])
+
+        caption = (
+            f"Bᴀᴋᴀᴀᴀ!!!.....{user_mention}\n\n"
+            f"<blockquote><b>I AM FILE STORE + AUTO ANIME BOT, I CAN STORE PRIVATE FILES IN SPECIFIED CHANNEL AND OTHER USERS CAN ACCESS IT FROM SPECIAL LINK.</b></blockquote>"
+        )
+
+        start_pic = await db.get_start_pic() if db else None
+        # Default stylish banner fallback if user has not set a custom start picture
+        pic_to_send = start_pic or "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1000&auto=format&fit=crop"
+
+        try:
+            await message.reply_photo(
+                photo=pic_to_send,
+                caption=caption,
+                parse_mode=enums.ParseMode.HTML,
+                reply_markup=modern_markup,
+            )
+            return
+        except Exception as pe:
+            log.debug("Photo send failed for /start modern, falling back to text: %s", pe)
+            await message.reply_text(
+                caption,
+                parse_mode=enums.ParseMode.HTML,
+                reply_markup=modern_markup,
+            )
+            return
+
     welcome_text = (
         "🎌 <b>AnimeDekho Bot</b>\n\n"
         "Stream Hindi dubbed anime!\n\n"
@@ -59,6 +101,77 @@ async def cmd_start(client: Client, message: Message):
         parse_mode=enums.ParseMode.HTML,
         reply_markup=markup,
     )
+
+
+async def start_callback(client: Client, query):
+    """Handle modern start menu callbacks (About, Help, Home)."""
+    data = query.data
+    from bot.database import db
+    from bot.telegram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    if data == "start:about":
+        text = (
+            "✨ <b>ABOUT ANIME DEKHO BOT</b> ✨\n\n"
+            "<blockquote><b>🤖 Name:</b> AnimeDekho Bot\n"
+            "<b>⚡ Version:</b> 2.5 Modern\n"
+            "<b>🐍 Framework:</b> Wzgram / Pyrogram\n"
+            "<b>📦 Engine:</b> Multi-Audio HLS / DASH\n"
+            "<b>🚀 Features:</b>\n"
+            "• Channel Auto-Mapping &amp; Dedicated Channels\n"
+            "• Auto Episode Monitor &amp; Airing Schedules\n"
+            "• Anti-Copyright 2-Min Invite Links &amp; Auto-Delete\n"
+            "• Dump Cache Channel &amp; Custom Thumbnails</blockquote>\n\n"
+            "<i>Click below to return to the main menu.</i>"
+        )
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("◀ Back", callback_data="start:home")]])
+    elif data == "start:help":
+        text = (
+            "📖 <b>HELP & COMMANDS GUIDE</b> 📖\n\n"
+            "<blockquote><b>User Commands:</b>\n"
+            "• /start — Open start menu\n"
+            "• /search &lt;anime&gt; — Search anime series &amp; movies\n"
+            "• /schedule — View today's anime release schedule\n"
+            "• /help — Show help information\n\n"
+            "<b>Admin / Owner Commands:</b>\n"
+            "• /automonitor — Toggle automated episode downloader\n"
+            "• /mapchannel — Route anime uploads to dedicated channel\n"
+            "• /startstyle — Switch /start UI (classic / modern)\n"
+            "• /schedstyle — Switch /schedule UI (classic / modern)\n"
+            "• /epstyle — Switch episode upload post UI (classic / modern)\n"
+            "• /poststyle — Switch channel album card UI (classic / modern)\n"
+            "• /setthumb — Configure custom thumbnails\n"
+            "• /setdump — Configure dump storage channel</blockquote>\n\n"
+            "<i>Click below to return to the main menu.</i>"
+        )
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("◀ Back", callback_data="start:home")]])
+    else:  # start:home
+        user = query.from_user
+        user_id = user.id if user else 0
+        first_name = user.first_name if user else "Friend"
+        user_mention = f"<a href='tg://user?id={user_id}'>{re.sub(r'[<>&]', '', first_name)}</a>" if user_id else (first_name or "Friend")
+        invite_link = await db.get_config("channel_invite_link") if db else None
+        main_chan = (await db.get_config("main_channel_link") if db else None) or invite_link or "https://t.me/animedekho"
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("• ⚡ MAIN CHANNEL • ↗", url=main_chan)],
+            [
+                InlineKeyboardButton("• ABOUT •", callback_data="start:about"),
+                InlineKeyboardButton("HELP •", callback_data="start:help"),
+            ]
+        ])
+        text = (
+            f"Bᴀᴋᴀᴀᴀ!!!.....{user_mention}\n\n"
+            f"<blockquote><b>I AM FILE STORE + AUTO ANIME BOT, I CAN STORE PRIVATE FILES IN SPECIFIED CHANNEL AND OTHER USERS CAN ACCESS IT FROM SPECIAL LINK.</b></blockquote>"
+        )
+
+    try:
+        if query.message.photo:
+            await query.message.edit_caption(caption=text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+        else:
+            await query.message.edit_text(text=text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
+        await query.answer()
+    except Exception as e:
+        log.debug("Start callback edit error: %s", e)
+        await query.answer()
 
 
 @require_approved
@@ -77,6 +190,11 @@ async def cmd_help(client: Client, message: Message):
         "/fsub — Manage Force Subscribe channel\n"
         "/fsub_mod — Toggle FSub 2-min timer link mode\n"
         "/dlt_time — Set file/video auto-delete timer\n"
+        "/startstyle — Switch /start menu style (classic/modern)\n"
+        "/schedstyle — Switch /schedule style (classic/modern)\n"
+        "/epstyle — Switch episode post style (classic/modern)\n"
+        "/poststyle — Switch channel card style (classic/modern)\n"
+        "/startpic — Set custom banner for /start\n"
         "/tutorial — Full system guide\n"
         "/ai &lt;query&gt; — Chat with Autonomous AI Agent\n"
         "/setai — View & change AI model/provider\n"
