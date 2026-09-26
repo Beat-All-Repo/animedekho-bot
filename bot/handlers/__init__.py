@@ -13,6 +13,13 @@ from .admin import (
     cmd_health, cmd_logs, cmd_errors, cmd_clearerrors, health_callback,
 )
 from .admin_ai import cmd_setai, cmd_ai
+from .worker_admin import (
+    cmd_stats, cmd_users_count, cmd_ban, cmd_unban,
+    cmd_broadcast, cmd_pbroadcast, cmd_dbroadcast,
+    cmd_fsub, cmd_fsub_mod, cmd_dlt_time, cmd_tutorial,
+    dlt_time_callback, toggle_fsub_mod_callback,
+)
+from bot.auto_delete import handle_close_dlt_notice
 
 __all__ = [
     "cmd_start", "cmd_help", "cmd_search", "callback_router", "handle_text",
@@ -24,6 +31,9 @@ __all__ = [
     "cmd_login", "cmd_logout", "cmd_userbot", "cmd_cancel", "cmd_autochannel",
     "cmd_albummode", "cmd_createchannel", "cmd_mapchannel", "cmd_unmapchannel", "cmd_channels",
     "cmd_health", "cmd_logs", "cmd_errors", "cmd_clearerrors", "health_callback",
+    "cmd_stats", "cmd_users_count", "cmd_ban", "cmd_unban",
+    "cmd_broadcast", "cmd_pbroadcast", "cmd_dbroadcast",
+    "cmd_fsub", "cmd_fsub_mod", "cmd_dlt_time", "cmd_tutorial",
     "register_handlers",
 ]
 
@@ -42,7 +52,8 @@ def register_handlers(app: Client):
     # Admin commands (owner-only, checked inside each handler)
     app.add_handler(MessageHandler(cmd_adduser, filters.command("adduser") & filters.private))
     app.add_handler(MessageHandler(cmd_removeuser, filters.command("removeuser") & filters.private))
-    app.add_handler(MessageHandler(cmd_users, filters.command("users") & filters.private))
+    app.add_handler(MessageHandler(cmd_users_count, filters.command("users") & filters.private))
+    app.add_handler(MessageHandler(cmd_users, filters.command(["approvedusers", "whitelist"]) & filters.private))
     app.add_handler(MessageHandler(cmd_setchannellink, filters.command("setchannellink") & filters.private))
     app.add_handler(MessageHandler(cmd_delete, filters.command("delete") & filters.private))
     app.add_handler(MessageHandler(cmd_addbot, filters.command("addbot") & filters.private))
@@ -50,6 +61,18 @@ def register_handlers(app: Client):
     app.add_handler(MessageHandler(cmd_bots, filters.command("bots") & filters.private))
     app.add_handler(MessageHandler(cmd_setbotquality, filters.command("setbotquality") & filters.private))
     app.add_handler(MessageHandler(cmd_refreshalbums, filters.command("refreshalbums") & filters.private))
+
+    # Worker Admin & Fleet Management commands
+    app.add_handler(MessageHandler(cmd_stats, filters.command("stats") & filters.private))
+    app.add_handler(MessageHandler(cmd_ban, filters.command("ban") & filters.private))
+    app.add_handler(MessageHandler(cmd_unban, filters.command(["uban", "unban"]) & filters.private))
+    app.add_handler(MessageHandler(cmd_broadcast, filters.command("broadcast") & filters.private))
+    app.add_handler(MessageHandler(cmd_pbroadcast, filters.command("pbroadcast") & filters.private))
+    app.add_handler(MessageHandler(cmd_dbroadcast, filters.command("dbroadcast") & filters.private))
+    app.add_handler(MessageHandler(cmd_fsub, filters.command("fsub") & filters.private))
+    app.add_handler(MessageHandler(cmd_fsub_mod, filters.command("fsub_mod") & filters.private))
+    app.add_handler(MessageHandler(cmd_dlt_time, filters.command("dlt_time") & filters.private))
+    app.add_handler(MessageHandler(cmd_tutorial, filters.command("tutorial") & filters.private))
 
     # Userbot & Channel mapping commands
     app.add_handler(MessageHandler(cmd_login, filters.command("login") & filters.private))
@@ -69,11 +92,12 @@ def register_handlers(app: Client):
     app.add_handler(MessageHandler(cmd_errors, filters.command("errors") & filters.private))
     app.add_handler(MessageHandler(cmd_clearerrors, filters.command("clearerrors") & filters.private))
 
-    # Health callbacks
+    # Specific callbacks (before general router)
     app.add_handler(CallbackQueryHandler(health_callback, filters.regex(r"^health:")))
-
-    # Delete callbacks (owner-only, before general router)
     app.add_handler(CallbackQueryHandler(delete_callback, filters.regex(r"^del:")))
+    app.add_handler(CallbackQueryHandler(dlt_time_callback, filters.regex(r"^dlt:\d+$")))
+    app.add_handler(CallbackQueryHandler(toggle_fsub_mod_callback, filters.regex(r"^toggle_fsub_mod$")))
+    app.add_handler(CallbackQueryHandler(handle_close_dlt_notice, filters.regex(r"^close_dlt_notice$")))
 
     # Callback queries (inline buttons)
     app.add_handler(CallbackQueryHandler(callback_router))

@@ -729,18 +729,38 @@ async def download_and_upload(
             else:
                 raise
 
+        user_file_msg = None
         # If uploaded to dedicated channel and chat_id is user PM, send file to user via file_id
         if destination_channel_id and chat_id != destination_channel_id:
             try:
                 fid = sent_msg.video.file_id if sent_msg.video else (sent_msg.document.file_id if sent_msg.document else None)
                 if fid:
-                    await client.send_document(
+                    user_file_msg = await client.send_document(
                         chat_id=chat_id,
                         document=fid,
                         caption=f"📺 {title} [{quality}]",
                     )
             except Exception as ue:
                 log.warning("Forward/send to user chat %d failed: %s", chat_id, ue)
+        elif not destination_channel_id and chat_id > 0:
+            user_file_msg = sent_msg
+
+        # Auto-delete scheduling if delivered in user PM
+        if user_file_msg and chat_id > 0:
+            try:
+                from bot.auto_delete import auto_delete_service
+                bot_user = getattr(client, "me", None)
+                bname = bot_user.username if bot_user else ""
+                get_link = f"https://t.me/{bname}?start=help" if bname else ""
+                await auto_delete_service.schedule_deletion(
+                    client=client,
+                    chat_id=chat_id,
+                    message_id=user_file_msg.id,
+                    get_file_link=get_link,
+                    file_title=title,
+                )
+            except Exception as ade:
+                log.debug("Auto-delete scheduling in downloader failed: %s", ade)
 
         total_time = time.time() - overall_start
         await progress_msg.edit_text(

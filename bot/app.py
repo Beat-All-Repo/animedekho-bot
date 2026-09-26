@@ -112,6 +112,11 @@ async def _on_start(client: Client):
     userbot_mod.userbot_manager = ub_mgr
     log.info("Userbot Manager initialized")
 
+    # Init Auto-Delete Service
+    from bot.auto_delete import auto_delete_service
+    auto_delete_service.start(client)
+    log.info("Auto-Delete service started")
+
     # Set bot commands menu
     from bot.telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
     try:
@@ -132,7 +137,17 @@ async def _on_start(client: Client):
                 BotCommand("help", "Show help message"),
                 BotCommand("adduser", "Approve a user"),
                 BotCommand("removeuser", "Remove a user"),
-                BotCommand("users", "List approved users"),
+                BotCommand("users", "User analytics & registered count"),
+                BotCommand("stats", "VPS stats & performance card"),
+                BotCommand("fsub", "Manage Force Subscribe channel"),
+                BotCommand("fsub_mod", "Toggle 2-min timer FSub links"),
+                BotCommand("dlt_time", "Configure file auto-delete timer"),
+                BotCommand("tutorial", "Bot network guide & tutorials"),
+                BotCommand("broadcast", "Broadcast text to all users"),
+                BotCommand("pbroadcast", "Broadcast photo to all users"),
+                BotCommand("dbroadcast", "Broadcast file to all users"),
+                BotCommand("ban", "Ban user from bot network"),
+                BotCommand("unban", "Unban user from bot network"),
                 BotCommand("setchannellink", "Set channel invite link"),
                 BotCommand("delete", "Delete a series or file"),
                 BotCommand("addbot", "Add a child worker bot"),
@@ -158,6 +173,8 @@ async def _on_start(client: Client):
 
 async def _on_stop(client: Client):
     """Called on shutdown — cleanup."""
+    from bot.auto_delete import auto_delete_service
+    await auto_delete_service.stop()
     from bot.userbot import userbot_manager
     if userbot_manager:
         await userbot_manager.stop()
@@ -169,7 +186,7 @@ async def _on_stop(client: Client):
     from bot.database import db
     if db:
         db.close()
-    log.info("HTTP client, Userbot, Child Bots & MongoDB closed")
+    log.info("HTTP client, Userbot, Child Bots, Auto-Delete & MongoDB closed")
 
 
 def create_app() -> Client:

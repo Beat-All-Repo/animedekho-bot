@@ -159,7 +159,7 @@ class LibraryManager:
 
         # Build caption
         caption = self._format_album_caption(
-            series_title, sorted_eps, sorted_qualities, is_movie, poster_url, channel_mapping=mapping,
+            series_title, sorted_eps, sorted_qualities, is_movie, poster_url, channel_mapping=mapping, series_slug=series_slug,
         )
 
         # Build buttons
@@ -296,8 +296,13 @@ class LibraryManager:
         quality_str = " | ".join(qualities)
 
         channel_line = ""
-        if channel_mapping and channel_mapping.get("invite_link"):
-            channel_line = f"➥ 📢 Cʜᴀɴɴᴇʟ:- <a href='{channel_mapping['invite_link']}'>Join Series Channel</a>\n"
+        if channel_mapping and channel_mapping.get("channel_id"):
+            slug = series_slug or channel_mapping.get("series_slug", "")
+            if slug:
+                join_deep = f"https://t.me/{self.bot_username}?start=join_{slug}"
+                channel_line = f"➥ 📢 Cʜᴀɴɴᴇʟ:- <a href='{join_deep}'>Join Series Channel</a>\n"
+            elif channel_mapping.get("invite_link"):
+                channel_line = f"➥ 📢 Cʜᴀɴɴᴇʟ:- <a href='{channel_mapping['invite_link']}'>Join Series Channel</a>\n"
 
         if is_movie:
             ep_info = "🎬 Movie"
@@ -347,7 +352,13 @@ class LibraryManager:
         buttons = []
 
         channel_btn = None
-        if channel_mapping and channel_mapping.get("invite_link"):
+        if channel_mapping and channel_mapping.get("channel_id"):
+            join_deep = f"https://t.me/{self.bot_username}?start=join_{series_slug}"
+            channel_btn = InlineKeyboardButton(
+                "📢 Watch / Episodes Channel",
+                url=join_deep,
+            )
+        elif channel_mapping and channel_mapping.get("invite_link"):
             channel_btn = InlineKeyboardButton(
                 "📢 Watch / Episodes Channel",
                 url=channel_mapping["invite_link"],
@@ -467,7 +478,7 @@ class LibraryManager:
                 )
                 caption = self._format_album_caption(
                     series_title, sorted_eps, sorted_qualities, is_movie, poster_url,
-                    channel_mapping=mapping,
+                    channel_mapping=mapping, series_slug=slug,
                 )
 
                 if a.get("has_poster"):

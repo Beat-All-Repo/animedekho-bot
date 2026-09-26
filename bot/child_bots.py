@@ -219,13 +219,65 @@ class ChildBotManager:
             in_memory=True,
         )
 
-        # ── Register Message Handlers for Child Bot ────────────────
+        # ── Register Message & Callback Handlers for Child Bot ──────────
+        from bot.handlers.worker_admin import (
+            cmd_stats, cmd_users_count, cmd_ban, cmd_unban,
+            cmd_broadcast, cmd_pbroadcast, cmd_dbroadcast,
+            cmd_fsub, cmd_fsub_mod, cmd_dlt_time, cmd_tutorial,
+            dlt_time_callback, toggle_fsub_mod_callback,
+        )
+        from bot.auto_delete import handle_close_dlt_notice
+
         @client.on_message(filters.command("start") & filters.private)
         async def _child_start(c: Client, m: Message):
+            user = m.from_user
+            user_id = user.id if user else 0
+
+            from bot.database import db
+            if db and user_id:
+                if await db.is_banned(user_id):
+                    await m.reply_text("⛔ You are banned from using this bot.")
+                    return
+                await db.track_bot_user(user_id, user.username or "", user.first_name or "")
+
             args = m.text.split(maxsplit=1)
-            if len(args) > 1 and args[1].startswith("get_"):
-                await self._handle_child_file_request(c, m, args[1], doc)
-                return
+            if len(args) > 1:
+                param = args[1]
+                if param.startswith("get_"):
+                    await self._handle_child_file_request(c, m, param, doc)
+                    return
+                elif param.startswith("join_"):
+                    slug = param[5:]
+                    if db:
+                        mapping = await db.get_channel_mapping(slug)
+                        if mapping and mapping.get("channel_id"):
+                            from bot.fsub import check_fsub, create_timer_invite_link
+                            is_sub, f_text, f_markup = await check_fsub(c, user_id, retry_param=param)
+                            if not is_sub:
+                                await m.reply_text(f_text, parse_mode=enums.ParseMode.HTML, reply_markup=f_markup)
+                                return
+
+                            t_link = await create_timer_invite_link(c, mapping["channel_id"], expire_seconds=120, name=f"Join {slug[:15]}")
+                            if not t_link:
+                                t_link = mapping.get("invite_link")
+                            if t_link:
+                                s_title = mapping.get("series_title", slug)
+                                t_msg = await m.reply_text(
+                                    f"📺 <b>Dedicated Series Channel:</b> {htmlmod.escape(s_title)}\n\n"
+                                    f"⏳ <b>Temporary Invite Link:</b>\n"
+                                    f"This link will automatically expire in <b>2 minutes</b>!\n\n"
+                                    f"Click below to join:",
+                                    parse_mode=enums.ParseMode.HTML,
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Channel", url=t_link)]])
+                                )
+                                from bot.auto_delete import auto_delete_service
+                                await auto_delete_service.schedule_deletion(
+                                    client=c,
+                                    chat_id=m.chat.id,
+                                    message_id=t_msg.id,
+                                    custom_seconds=120,
+                                )
+                                return
 
             main_user = ""
             if self.main_client and hasattr(self.main_client, "me") and self.main_client.me:
@@ -256,9 +308,52 @@ class ChildBotManager:
             await m.reply_text(
                 f"📖 <b>Worker Bot Help</b>\n\n"
                 f"This bot is an automated file delivery worker for {main_user}.\n"
-                f"Click on any episode or quality button in our channel or main bot to download.",
+                f"Click on any episode or quality button in our channel or main bot to download.\n\n"
+                "<b>Commands:</b>\n"
+                "/start — Start bot\n"
+                "/help — View help\n"
+                "/tutorial — How it works",
                 parse_mode=enums.ParseMode.HTML,
             )
+
+        @client.on_message(filters.command("status") & filters.private)
+        async def _child_status(c: Client, m: Message):
+            user = m.from_user
+            if user and not is_owner(user.id):
+                await m.reply_text("⛔ Owner only command.")
+                return
+
+            from bot.health import get_uptime, get_system_stats
+            _, uptime_str = get_uptime()
+            sys_stats = get_system_stats()
+            text = (
+                f"🤖 <b>Child Worker Status</b> (@{username})\n\n"
+                f"• <b>Assigned Tier:</b> <code>{quality.upper()}</code>\n"
+                f"• <b>Files Delivered:</b> <code>{doc.get('files_served', 0)}</code>\n"
+                f"• <b>Uptime:</b> <code>{uptime_str}</code>\n"
+                f"• <b>RAM Usage:</b> <code>{sys_stats['ram_pct']}%</code> ({sys_stats['proc_mem_mb']} MB)\n"
+                f"• <b>CPU Load:</b> <code>{sys_stats['cpu_pct']}%</code>\n"
+                f"• <b>Status:</b> <code>ONLINE (Active)</code>"
+            )
+            await m.reply_text(text, parse_mode=enums.ParseMode.HTML)
+
+        # Attach shared admin commands on child bot
+        client.on_message(filters.command("users") & filters.private)(cmd_users_count)
+        client.on_message(filters.command("ban") & filters.private)(cmd_ban)
+        client.on_message(filters.command(["uban", "unban"]) & filters.private)(cmd_unban)
+        client.on_message(filters.command("broadcast") & filters.private)(cmd_broadcast)
+        client.on_message(filters.command("pbroadcast") & filters.private)(cmd_pbroadcast)
+        client.on_message(filters.command("dbroadcast") & filters.private)(cmd_dbroadcast)
+        client.on_message(filters.command("fsub") & filters.private)(cmd_fsub)
+        client.on_message(filters.command("fsub_mod") & filters.private)(cmd_fsub_mod)
+        client.on_message(filters.command("dlt_time") & filters.private)(cmd_dlt_time)
+        client.on_message(filters.command("stats") & filters.private)(cmd_stats)
+        client.on_message(filters.command("tutorial") & filters.private)(cmd_tutorial)
+
+        # Attach callbacks on child bot
+        client.on_callback_query(filters.regex(r"^dlt:"))(dlt_time_callback)
+        client.on_callback_query(filters.regex(r"^toggle_fsub_mod"))(toggle_fsub_mod_callback)
+        client.on_callback_query(filters.regex(r"^close_dlt_notice"))(handle_close_dlt_notice)
 
         try:
             await client.start()
@@ -278,22 +373,12 @@ class ChildBotManager:
         user = message.from_user
         user_id = user.id if user else 0
 
-        # Force Subscribe verification (if main channel is configured)
-        if settings.bot.main_channel:
-            from bot.forcesub import check_subscription
-            from bot.auth import is_owner
-            if not is_owner(user_id):
-                is_sub = await check_subscription(client, user_id, settings.bot.main_channel)
-                if not is_sub:
-                    invite_link = None
-                    if db:
-                        invite_link = await db.get_config("channel_invite_link")
-                    text = "📢 <b>Please join our Channel to download this file!</b>\n\nAfter joining, click the link again."
-                    markup = None
-                    if invite_link:
-                        markup = InlineKeyboardMarkup([[InlineKeyboardButton("📢 Join Channel", url=invite_link)]])
-                    await message.reply_text(text, parse_mode=enums.ParseMode.HTML, reply_markup=markup)
-                    return
+        # Force Subscribe verification (supports timer links when fsub_mod is on)
+        from bot.fsub import check_fsub
+        is_sub, f_text, f_markup = await check_fsub(client, user_id, retry_param=param)
+        if not is_sub:
+            await message.reply_text(f_text, parse_mode=enums.ParseMode.HTML, reply_markup=f_markup)
+            return
 
         # Parse deep link: get_<slug>_<quality>_<episode_key>
         raw = param[4:]  # strip 'get_'
@@ -312,10 +397,10 @@ class ChildBotManager:
 
         from utils.helpers import slug_to_title
         title = slug_to_title(series_slug)
+        from bot.auto_delete import auto_delete_service
 
         # Batch download / Get All request
         if episode_key.lower() == "all":
-            # Find all files matching this series and quality
             query: dict = {"series_slug": series_slug}
             is_4k = quality.lower() in ("4k", "2160p", "2160")
             if is_4k:
@@ -333,7 +418,6 @@ class ChildBotManager:
             all_files = await cursor.to_list(length=None)
 
             if not all_files:
-                # Flexible fallback if exact series_slug didn't match
                 all_files = await db.files.find({"series_title": {"$regex": f"^{re.escape(title)}$", "$options": "i"}}).to_list(length=None)
 
             if not all_files:
@@ -351,9 +435,17 @@ class ChildBotManager:
                 q_label = f.get("quality", quality)
                 caption = f"📦 <b>{htmlmod.escape(title)}</b> [{q_label}] — {ep_key}\n<i>⚡ Delivered via @{bot_doc['username']}</i>"
 
-                sent = await self._send_single_file(client, message.chat.id, f, caption)
-                if sent:
+                sent_msg = await self._send_single_file(client, message.chat.id, f, caption)
+                if sent_msg:
                     delivered += 1
+                    get_file_link = f"https://t.me/{bot_doc['username']}?start={param}"
+                    await auto_delete_service.schedule_deletion(
+                        client=client,
+                        chat_id=message.chat.id,
+                        message_id=sent_msg.id,
+                        get_file_link=get_file_link,
+                        file_title=title,
+                    )
                 await asyncio.sleep(0.4)
 
             await status_msg.edit_text(f"✅ <b>Delivered {delivered}/{len(all_files)} episode(s)</b> via @{bot_doc['username']}!", parse_mode=enums.ParseMode.HTML)
@@ -363,7 +455,6 @@ class ChildBotManager:
         # Single episode or movie
         cached_file = await db.find_cached_file(series_slug, episode_key, quality)
         if not cached_file:
-            # Fallback to direct query
             cached_file = await db.files.find_one({
                 "series_slug": series_slug,
                 "episode_key": episode_key,
@@ -377,20 +468,29 @@ class ChildBotManager:
         disp_ep = f" — {episode_key}" if episode_key.lower() != "movie" else " 🎬 Movie"
         caption = f"📦 <b>{htmlmod.escape(title)}</b> [{q_label}]{disp_ep}\n<i>⚡ Delivered via @{bot_doc['username']}</i>"
 
-        sent = await self._send_single_file(client, message.chat.id, cached_file, caption)
-        if sent:
+        sent_msg = await self._send_single_file(client, message.chat.id, cached_file, caption)
+        if sent_msg:
             await db.increment_child_bot_stats(bot_doc["bot_id"])
+            get_file_link = f"https://t.me/{bot_doc['username']}?start={param}"
+            await auto_delete_service.schedule_deletion(
+                client=client,
+                chat_id=message.chat.id,
+                message_id=sent_msg.id,
+                get_file_link=get_file_link,
+                file_title=title,
+            )
         else:
             await message.reply_text("⚠️ Could not deliver file. Please try again or download via our main bot.")
 
     async def _send_single_file(
         self, child_client: Client, chat_id: int, file_doc: dict, caption: str
-    ) -> bool:
+    ) -> Message | None:
         """
         Deliver a single file to user with fallback cascade:
         1. Copy from storage/main channel (instant & works across all bots).
         2. Send document/video using file_id via child client.
         3. Fallback to main client sending/copying directly.
+        Returns the sent Message or None.
         """
         storage_cid = file_doc.get("storage_channel_id")
         storage_mid = file_doc.get("storage_message_id")
@@ -399,53 +499,53 @@ class ChildBotManager:
         # 1. Try copy_message from storage/dump channel
         if storage_cid and storage_mid:
             try:
-                await child_client.copy_message(
+                msg = await child_client.copy_message(
                     chat_id=chat_id,
                     from_chat_id=storage_cid,
                     message_id=storage_mid,
                     caption=caption,
                     parse_mode=enums.ParseMode.HTML,
                 )
-                return True
+                return msg
             except Exception as e:
                 log.debug("copy_message from storage channel failed: %s", e)
 
         # 2. Try sending directly with file_id
         if file_id:
             try:
-                await child_client.send_video(
+                msg = await child_client.send_video(
                     chat_id=chat_id,
                     video=file_id,
                     caption=caption,
                     parse_mode=enums.ParseMode.HTML,
                 )
-                return True
+                return msg
             except Exception:
                 try:
-                    await child_client.send_document(
+                    msg = await child_client.send_document(
                         chat_id=chat_id,
                         document=file_id,
                         caption=caption,
                         parse_mode=enums.ParseMode.HTML,
                     )
-                    return True
+                    return msg
                 except Exception as e2:
                     log.debug("Child bot direct send file_id failed: %s", e2)
 
         # 3. Fallback: Main Bot client delivers on behalf of child bot
         if self.main_client and file_id:
             try:
-                await self.main_client.send_document(
+                msg = await self.main_client.send_document(
                     chat_id=chat_id,
                     document=file_id,
                     caption=caption,
                     parse_mode=enums.ParseMode.HTML,
                 )
-                return True
+                return msg
             except Exception as e3:
                 log.warning("Main client fallback send failed: %s", e3)
 
-        return False
+        return None
 
     async def check_bots_health(self) -> list[dict]:
         """

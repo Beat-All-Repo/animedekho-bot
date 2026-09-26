@@ -25,6 +25,9 @@ class Database:
         self.child_bots = self.db["child_bots"]
         self.channel_mappings = self.db["channel_mappings"]
         self.download_errors = self.db["download_errors"]
+        self.bot_users = self.db["bot_users"]
+        self.banned_users = self.db["banned_users"]
+        self.auto_delete_jobs = self.db["auto_delete_jobs"]
 
     async def init_indexes(self):
         """Create necessary indexes."""
@@ -48,6 +51,10 @@ class Database:
         await self.channel_mappings.create_index("channel_id")
         await self.download_errors.create_index([("timestamp", -1)])
         await self.download_errors.create_index("series_slug")
+        await self.bot_users.create_index("user_id", unique=True)
+        await self.banned_users.create_index("user_id", unique=True)
+        await self.auto_delete_jobs.create_index([("delete_at", 1)])
+        await self.auto_delete_jobs.create_index([("chat_id", 1), ("message_id", 1)], unique=True)
         log.info("MongoDB indexes created")
 
     # ── User management ───────────────────────────────────────────
@@ -601,6 +608,184 @@ class Database:
         except Exception as e:
             log.warning("Failed to clear download errors: %s", e)
             return 0
+
+    # ── Bot User Network & Broadcasting ────────────────────────────
+
+    async def track_bot_user(self, user_id: int, username: str = "", first_name: str = ""):
+        """Record user activity for user count and broadcasting across bot fleet."""
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            await self.bot_users.update_one(
+                {"user_id": user_id},
+                {
+                    "$set": {
+                        "username": username or "",
+                        "first_name": first_name or "",
+                        "last_seen": now,
+                    },
+                    "$setOnInsert": {
+                        "first_seen": now,
+                    }
+                },
+                upsert=True,
+            )
+        except Exception as e:
+            log.debug("Failed tracking bot user %d: %s", user_id, e)
+
+    async def get_bot_users_count(self) -> int:
+        """Total number of users tracked across bot fleet."""
+        try:
+            return await self.bot_users.count_documents({})
+        except Exception as e:
+            log.warning("Failed to get bot users count: %s", e)
+            return 0
+
+    async def get_all_bot_user_ids(self) -> list[int]:
+        """Get list of all user IDs for broadcasting."""
+        try:
+            cursor = self.bot_users.find({}, {"user_id": 1})
+            return [doc["user_id"] async for doc in cursor if "user_id" in doc]
+        except Exception as e:
+            log.warning("Failed to fetch all user IDs: %s", e)
+            return []
+
+    # ── Ban / Unban System ─────────────────────────────────────────
+
+    async def ban_user(self, user_id: int, reason: str = "", banned_by: int = 0) -> bool:
+        """Ban a user from all bots."""
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            await self.banned_users.update_one(
+                {"user_id": user_id},
+                {"$set": {
+                    "user_id": user_id,
+                    "reason": reason,
+                    "banned_by": banned_by,
+                    "banned_at": now,
+                }},
+                upsert=True,
+            )
+            return True
+        except Exception as e:
+            log.warning("Failed banning user %d: %s", user_id, e)
+            return False
+
+    async def unban_user(self, user_id: int) -> bool:
+        """Unban a user."""
+        try:
+            res = await self.banned_users.delete_one({"user_id": user_id})
+            return res.deleted_count > 0
+        except Exception as e:
+            log.warning("Failed unbanning user %d: %s", user_id, e)
+            return False
+
+    async def is_banned(self, user_id: int) -> bool:
+        """Check if a user is banned."""
+        if not user_id:
+            return False
+        try:
+            doc = await self.banned_users.find_one({"user_id": user_id})
+            return doc is not None
+        except Exception:
+            return False
+
+    async def get_banned_users_count(self) -> int:
+        """Total banned users count."""
+        try:
+            return await self.banned_users.count_documents({})
+        except Exception:
+            return 0
+
+    # ── Auto Delete System ─────────────────────────────────────────
+
+    async def add_auto_delete_job(
+        self,
+        chat_id: int,
+        message_id: int,
+        bot_id: int,
+        delete_at: float,
+        get_file_link: str = "",
+        file_title: str = "",
+    ):
+        """Store scheduled auto-delete task in MongoDB."""
+        try:
+            await self.auto_delete_jobs.update_one(
+                {"chat_id": chat_id, "message_id": message_id},
+                {"$set": {
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "bot_id": bot_id,
+                    "delete_at": delete_at,
+                    "get_file_link": get_file_link,
+                    "file_title": file_title,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }},
+                upsert=True,
+            )
+        except Exception as e:
+            log.warning("Failed adding auto-delete job: %s", e)
+
+    async def get_pending_auto_delete_jobs(self, before_ts: float | None = None) -> list[dict]:
+        """Fetch auto-delete jobs scheduled to be deleted."""
+        try:
+            query: dict = {}
+            if before_ts is not None:
+                query["delete_at"] = {"$lte": before_ts}
+            cursor = self.auto_delete_jobs.find(query).sort("delete_at", 1)
+            return await cursor.to_list(length=None)
+        except Exception as e:
+            log.warning("Failed fetching auto-delete jobs: %s", e)
+            return []
+
+    async def remove_auto_delete_job(self, chat_id: int, message_id: int):
+        """Remove an auto-delete task from MongoDB."""
+        try:
+            await self.auto_delete_jobs.delete_one({"chat_id": chat_id, "message_id": message_id})
+        except Exception as e:
+            log.debug("Failed removing auto-delete job: %s", e)
+
+    async def get_auto_delete_jobs_count(self) -> int:
+        """Count pending auto-delete jobs."""
+        try:
+            return await self.auto_delete_jobs.count_documents({})
+        except Exception:
+            return 0
+
+    # ── FSub & Auto-Delete Configuration ───────────────────────────
+
+    async def get_fsub_mod(self) -> bool:
+        """Get FSub timer link mode status (default True = timer links ON)."""
+        val = await self.get_config("fsub_mod", default="on")
+        if isinstance(val, str):
+            return val.lower() in ("on", "true", "1", "yes")
+        return bool(val)
+
+    async def set_fsub_mod(self, enabled: bool):
+        """Set FSub timer link mode ('on' or 'off')."""
+        await self.set_config("fsub_mod", "on" if enabled else "off")
+
+    async def get_fsub_channel(self) -> int | str | None:
+        """Get configured FSub channel (defaults to settings.bot.main_channel)."""
+        val = await self.get_config("fsub_channel", default=None)
+        if val is not None:
+            return int(val) if str(val).lstrip("-").isdigit() else str(val)
+        return settings.bot.main_channel or None
+
+    async def set_fsub_channel(self, channel: int | str | None):
+        """Set custom FSub channel."""
+        await self.set_config("fsub_channel", channel)
+
+    async def get_dlt_time(self) -> int:
+        """Get file auto-delete time in seconds (default 600s = 10 mins; 0 = disabled)."""
+        val = await self.get_config("dlt_time", default=600)
+        try:
+            return max(0, int(val))
+        except Exception:
+            return 600
+
+    async def set_dlt_time(self, seconds: int):
+        """Set file auto-delete time in seconds (0 = disabled)."""
+        await self.set_config("dlt_time", max(0, int(seconds)))
 
     async def ping_database(self) -> float:
         """Ping MongoDB and return round-trip latency in milliseconds."""

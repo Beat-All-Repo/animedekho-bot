@@ -83,6 +83,29 @@ Built with **WZGram (High-Performance MTProto Fork with WarpCrypto)** for **2GB 
   - In-memory ring buffer keeps the latest 150 log events.
   - Filter by error logs or export full logs as a `.txt` document file (`/logs export`).
 
+### ⏳ 2-Minute Timer Links (Anti-Copyright Protection)
+- **Zero Permanent Link Leakage** — Channel album cards no longer expose permanent invite links to scrapers or bad actors.
+- **On-Demand Generation** — All channel buttons route to `https://t.me/{bot}?start=join_{slug}`, generating a fresh Telegram-enforced **2-minute auto-expiring link** (`expire_date = now + 120s`, `member_limit = 1`).
+- **Telegram Server-Side Expiration** — Because expiration is handled natively by Telegram servers, links immediately invalidate even if the bot is stopped, killed, or restarted.
+- **Auto-Purged Notice** — The bot deletes the generated invite message from the chat after 120 seconds.
+
+### 🗑️ Persistent Auto-Delete System (`/dlt_time`)
+- **Automatic Media Cleanup** — Videos and documents delivered to users in private chat are automatically deleted after a configurable timer (default: 10 minutes).
+- **Restart & Crash Resilient** — Pending deletion jobs are persisted in MongoDB (`auto_delete_jobs`). When the bot restarts, past-due jobs are executed immediately and pending jobs resume without loss.
+- **One-Click File Recovery** — Replaces deleted files with an elegant notification card containing a `[GET FILE AGAIN! ↗]` deep-link button and a `[CLOSE]` dismissal button.
+
+### 🔒 Advanced Force Subscribe (FSub) & Timer Mode
+- **Dual FSub Modes (`/fsub_mod`)**:
+  - `ON`: Force-subscribe invite links are generated as **2-minute auto-expiring timer links** for enhanced privacy and strike prevention.
+  - `OFF`: Uses standard permanent channel links.
+- **Quick Controls** — `/fsub <channel_id_or_username>`, `/fsub off`, or toggle via interactive buttons.
+
+### 📊 Real-Time VPS Stats & Worker Fleet Analytics
+- **Live VPS Stats Card (`/stats`)** — Displays formatted ASCII/Unicode metrics including CPU %, RAM (used/total), Disk (used/free), real-time Download/Upload network speeds, and system uptime.
+- **Network User Analytics (`/users`)** — Tracks and counts all users across the main bot and all child workers.
+- **Broadcast System** — Broadcast text (`/broadcast`), photos (`/pbroadcast`), or files/videos (`/dbroadcast`) with real-time live progress edits.
+- **Global User Moderation** — Ban (`/ban <id> [reason]`) and unban (`/uban <id>` or `/unban <id>`) users network-wide.
+
 ---
 
 ## Bot Commands
@@ -94,8 +117,27 @@ Built with **WZGram (High-Performance MTProto Fork with WarpCrypto)** for **2GB 
 | `/start` | Open the main menu |
 | `/search <query>` | Search anime by title |
 | `/help` | Show user help message |
+| `/tutorial` | View complete bot guide and tutorials |
 
 ### 👑 Owner & Admin Commands
+
+#### VPS Stats & Analytics
+| Command | Description |
+| :--- | :--- |
+| `/stats` | Real-time VPS performance card (CPU, RAM, DISK, DL/UL speed, Uptime) |
+| `/users` | Bot network user analytics (registered users, whitelist, banned) |
+| `/ban <id> [reason]` | Ban a user network-wide across main and child bots |
+| `/uban <id>` (or `/unban`) | Unban a user from the bot network |
+| `/broadcast <text>` | Broadcast text announcement to all bot users with live progress |
+| `/pbroadcast` | Broadcast photo to all users (reply to a photo) |
+| `/dbroadcast` | Broadcast document/video to all users (reply to a file) |
+
+#### Timer Links & Auto-Delete
+| Command | Description |
+| :--- | :--- |
+| `/dlt_time [duration]` | Configure auto-delete timer (e.g. `10m`, `600`, `1h`, `off`) with quick presets |
+| `/fsub <channel>` | Set Force Subscribe channel ID or `@username` (`/fsub off` to disable) |
+| `/fsub_mod <on\|off>` | Toggle 2-minute expiring timer links for Force Subscribe |
 
 #### System Health & Diagnostics
 | Command | Description |
@@ -141,8 +183,8 @@ Built with **WZGram (High-Performance MTProto Fork with WarpCrypto)** for **2GB 
 | :--- | :--- |
 | `/adduser <id>` | Approve a user to access the bot |
 | `/removeuser <id>` | Revoke user access |
-| `/users` | List approved user IDs |
-| `/setchannellink <url>` | Set force-subscribe invite link |
+| `/approvedusers` | List approved whitelist user IDs |
+| `/setchannellink <url>` | Set channel invite link fallback |
 | `/delete` | Interactive menu to delete files or entire series from library |
 
 ---
